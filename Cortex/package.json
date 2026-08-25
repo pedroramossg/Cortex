@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "jest",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -26,6 +26,7 @@
     "@vitejs/plugin-react": "^4.6.0",
     "vite": "^7.0.4",
     "@tauri-apps/cli": "^2",
-    "jest": "^30.4.2"
+    "jest": "^30.4.2",
+    "supertest": "^7.0.0"
   }
 }
