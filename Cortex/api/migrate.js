@@ -15,8 +15,6 @@ const pool = new Pool({
 async function runMigrations() {
     const client = await pool.connect();
 
-
-
     try {
         console.log('Running migrations...');
         const schemaPath = path.join(process.cwd(), 'db', 'schema.sql')

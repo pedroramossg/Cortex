@@ -29,3 +29,12 @@ export const setCache = async (req, res, data) => {
         console.log("Cache error: " + err)
     }
 }
+
+export const removeCache = async (req, res, data) => {
+    try {
+        const cacheKey = `cache:${req.originalUrl}`
+        await redisClient.del(cacheKey)
+    } catch (err) {
+        console.log("Cache error: " + err)
+    }
+}
