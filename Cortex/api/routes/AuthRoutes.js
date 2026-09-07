@@ -71,8 +71,8 @@ const router = express.Router();
  *       - Auth
  */
 
-router.post("/auth/register", checkCache, authController.register);
-router.post("/auth/login", checkCache, authController.login);
+router.post("/auth/register", authController.register);
+router.post("/auth/login", authController.login);
 router.post("/auth/logout", authController.logout);
 
 export default router;

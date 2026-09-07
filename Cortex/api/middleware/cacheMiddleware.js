@@ -1,7 +1,12 @@
 import redisClient from "../config/redis.js";
 
 export const checkCache = async (req, res, next) => {
-    const cacheKey = `cache:${req.originalUrl}`
+    // Prevent caching for non-GET requests (like POST login/register)
+    if (req.method !== 'GET') {
+        return next();
+    }
+
+    const cacheKey = `cache:${req.originalUrl}`;
 
     try {
         const cachedData = await redisClient.get(cacheKey);
@@ -15,26 +20,25 @@ export const checkCache = async (req, res, next) => {
         next();
 
     } catch (err) {
-        console.log("Cache error: " + err);
+        console.error("Cache error: " + err);
         next();
     }
 };
 
-
-export const setCache = async (req, res, data) => {
+export const setCache = async (req, res, data, customKey = null, ttl = 3600) => {
     try {
-        const cacheKey = `cache:${req.originalUrl}`
-        await redisClient.setEx(cacheKey, 3600, JSON.stringify(data))
+        const cacheKey = customKey ? customKey : `cache:${req.originalUrl}`;
+        await redisClient.setEx(cacheKey, ttl, JSON.stringify(data));
     } catch (err) {
-        console.log("Cache error: " + err)
+        console.error("Cache error: " + err);
     }
-}
+};
 
-export const removeCache = async (req, res, data) => {
+export const removeCache = async (req, res, customKey = null) => {
     try {
-        const cacheKey = `cache:${req.originalUrl}`
-        await redisClient.del(cacheKey)
+        const cacheKey = customKey ? customKey : `cache:${req.originalUrl}`;
+        await redisClient.del(cacheKey);
     } catch (err) {
-        console.log("Cache error: " + err)
+        console.error("Cache error: " + err);
     }
-}
+};
