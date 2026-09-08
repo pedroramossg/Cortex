@@ -19,14 +19,20 @@ app.use(express.json());
 setupSwagger(app);
 
 
+import webhookRoutes from './routes/WebhookRoutes.js';
+
 app.use('/health', healthRouter);
 app.use('/auth', authRoutes);
+app.use('/webhooks', webhookRoutes);
 
 app.use(errorHandler);
+
+import { startGmailWorker } from './jobs/worker.js';
 
 if (process.env.NODE_ENV !== 'test') {
     app.listen(port, () => {
         console.log(`Server is running on port ${port}`);
+        startGmailWorker();
     });
 }
 

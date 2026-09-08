@@ -71,8 +71,14 @@ const router = express.Router();
  *       - Auth
  */
 
+import * as googleAuthController from '../controllers/GoogleAuthController.js';
+
 router.post("/auth/register", authController.register);
 router.post("/auth/login", authController.login);
 router.post("/auth/logout", authController.logout);
+
+// Google OAuth Routes
+router.get("/auth/google", googleAuthController.redirectUrl);
+router.get("/auth/google/callback", googleAuthController.handleCallback);
 
 export default router;
