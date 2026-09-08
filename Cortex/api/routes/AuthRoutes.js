@@ -1,6 +1,10 @@
 import express from 'express';
 import * as authController from '../controllers/AuthController.js';
-import { checkCache } from '../middleware/cacheMiddleware.js';
+import * as googleAuthController from '../controllers/GoogleAuthController.js';
+import { authLimiter } from '../middleware/rateLimiter.js';
+import { validate } from '../middleware/validate.js';
+import { registerSchema, loginSchema } from '../validators/AuthValidator.js';
+
 const router = express.Router();
 
 /**
@@ -71,14 +75,14 @@ const router = express.Router();
  *       - Auth
  */
 
-import * as googleAuthController from '../controllers/GoogleAuthController.js';
+import { requireAuth } from '../middleware/requireAuth.js';
 
-router.post("/auth/register", authController.register);
-router.post("/auth/login", authController.login);
-router.post("/auth/logout", authController.logout);
+router.post("/auth/register", authLimiter, validate(registerSchema), authController.register);
+router.post("/auth/login", authLimiter, validate(loginSchema), authController.login);
+router.post("/auth/logout", requireAuth, authController.logout);
 
 // Google OAuth Routes
 router.get("/auth/google", googleAuthController.redirectUrl);
-router.get("/auth/google/callback", googleAuthController.handleCallback);
+router.get("/auth/google/callback", authLimiter, googleAuthController.handleCallback);
 
 export default router;

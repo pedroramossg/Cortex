@@ -13,9 +13,6 @@ const generateToken = (user) => {
 export const register = async (req, res, next) => {
     try {
         const { name, email, password } = req.body;
-        if (!name || !email || !password) {
-            return res.status(400).json({ message: "Missing required fields" });
-        }
 
         const existingUser = await User.findByEmail({ email });
         if (existingUser) {
@@ -48,9 +45,6 @@ export const register = async (req, res, next) => {
 export const login = async (req, res, next) => {
     try {
         const { email, password } = req.body;
-        if (!email || !password) {
-            return res.status(400).json({ message: "Missing required fields" });
-        }
 
         const user = await User.findByEmail({ email });
         if (!user) {
@@ -83,14 +77,27 @@ export const login = async (req, res, next) => {
     }
 }
 
+import redisClient from '../config/redis.js';
+
 export const logout = async (req, res, next) => {
     try {
         const id = req.user?.id || req.user?.userId;
+        const token = req.token;
 
-        if (!id) {
+        if (!id || !token) {
             return res.status(401).json({ message: "Unauthorized" });
         }
 
+        // Calculate remaining TTL for the token
+        const exp = req.user.exp; // Extracted by requireAuth
+        const now = Math.floor(Date.now() / 1000);
+        const timeToLive = exp - now;
+
+        if (timeToLive > 0) {
+            await redisClient.setEx(`blocklist:${token}`, timeToLive, 'revoked');
+        }
+
+        // Clear user session cache
         const cacheKey = `user_session:${id}`;
         await removeCache(req, res, cacheKey);
 

@@ -1,5 +1,7 @@
 import express from 'express';
 import { handleGmailPush } from '../webhooks/gmail.js';
+import { webhookLimiter } from '../middleware/rateLimiter.js';
+import { verifyGoogleOIDC } from '../middleware/verifyGoogleOIDC.js';
 
 const router = express.Router();
 
@@ -12,6 +14,6 @@ const router = express.Router();
  *     tags:
  *       - Webhooks
  */
-router.post("/gmail", handleGmailPush);
+router.post("/gmail", webhookLimiter, verifyGoogleOIDC, handleGmailPush);
 
 export default router;
