@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "start": "node api/server.js",
+    "server": "node api/server.js",
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --forceExit",
+    "db:seed": "node api/scripts/seed.js",
     "tauri": "tauri"
   },
   "dependencies": {

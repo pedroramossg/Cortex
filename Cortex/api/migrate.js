@@ -7,9 +7,12 @@ dotenv.config();
 
 const { Pool } = pkg;
 
+const isProduction = process.env.NODE_ENV === 'production';
+const requiresSSL = process.env.DATABASE_SSL === 'true' || (isProduction && !process.env.DATABASE_URL?.includes('localhost'));
+
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+    ssl: requiresSSL ? { rejectUnauthorized: false } : false
 });
 
 async function runMigrations() {
