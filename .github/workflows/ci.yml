@@ -1,0 +1,73 @@
+name: Cortex CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Backend Unit & Integration Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./Cortex
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22.x (Active LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+          cache-dependency-path: './Cortex/package-lock.json'
+
+      - name: Install dependencies (clean install)
+        run: npm ci
+
+      - name: Run test suite
+        run: npm test
+        env:
+          NODE_ENV: test
+          CI: true
+          JWT_SECRET: cortex_ci_super_secret_jwt_random_key_min_32_chars
+          DEFAULT_TIMEZONE: America/Sao_Paulo
+
+      - name: Validate seed script syntax
+        run: node -e "import('./api/scripts/seed.js').then(() => console.log('✅ Seed script syntax validated'))"
+
+  docker-build:
+    name: Container Build & Smoke Test
+    needs: test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./Cortex
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: docker build -t cortex:ci -f Dockerfile .
+
+      - name: Verify Container Startup (Smoke Test)
+        run: |
+          docker run --rm -d --name cortex-ci-smoke -p 3000:3000 -e NODE_ENV=test cortex:ci
+          sleep 4
+          docker ps | grep cortex-ci-smoke || (docker logs cortex-ci-smoke && exit 1)
+          docker stop cortex-ci-smoke
