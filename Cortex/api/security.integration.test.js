@@ -98,7 +98,10 @@ describe('Security & DevSecOps Integration Tests', () => {
             const token = jwt.sign({ id: 'user_1', email: 'test@example.com' }, process.env.JWT_SECRET, { expiresIn: '1h' });
             
             // Mock Redis to return 'revoked' for this token
-            mockRedis.get.mockResolvedValueOnce('revoked');
+            mockRedis.get.mockImplementation(async (key) => {
+                if (key && key.includes(token)) return 'revoked';
+                return null;
+            });
 
             const response = await request(app)
                 .post('/auth/logout')
@@ -204,14 +207,19 @@ describe('Security & DevSecOps Integration Tests', () => {
         it('should revoke Google tokens, clear tokens in DB, purge Redis cache, and return 200', async () => {
             const token = jwt.sign({ id: 'user-google-1', email: 'user@cortex.dev' }, process.env.JWT_SECRET, { expiresIn: '1h' });
             
-            User.findById.mockResolvedValueOnce({
-                id: 'user-google-1',
-                email: 'user@cortex.dev',
-                google_access_token: 'google_access_token_xyz',
-                google_refresh_token: 'google_refresh_token_abc'
+            User.findById.mockImplementation(async (id) => {
+                if (id === 'user-google-1') {
+                    return {
+                        id: 'user-google-1',
+                        email: 'user@cortex.dev',
+                        google_access_token: 'google_access_token_xyz',
+                        google_refresh_token: 'google_refresh_token_abc'
+                    };
+                }
+                return null;
             });
-            User.clearGoogleTokens.mockResolvedValueOnce({ id: 'user-google-1' });
-            mockRedis.keys.mockResolvedValueOnce(['briefing:user-google-1:today', 'contact_dossier:user-google-1:test']);
+            User.clearGoogleTokens.mockImplementation(async (id) => ({ id }));
+            mockRedis.keys.mockImplementation(async () => ['briefing:user-google-1:today', 'contact_dossier:user-google-1:test']);
 
             const response = await request(app)
                 .post('/auth/google/disconnect')
