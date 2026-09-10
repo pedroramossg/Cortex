@@ -77,12 +77,12 @@ const router = express.Router();
 
 import { requireAuth } from '../middleware/requireAuth.js';
 
-router.post("/auth/register", authLimiter, validate(registerSchema), authController.register);
-router.post("/auth/login", authLimiter, validate(loginSchema), authController.login);
-router.post("/auth/logout", requireAuth, authController.logout);
+router.post("/register", authLimiter, validate(registerSchema), authController.register);
+router.post("/login", authLimiter, validate(loginSchema), authController.login);
+router.post("/logout", requireAuth, authController.logout);
 
 // Google OAuth Routes
-router.get("/auth/google", googleAuthController.redirectUrl);
-router.get("/auth/google/callback", authLimiter, googleAuthController.handleCallback);
+router.get("/google", googleAuthController.redirectUrl);
+router.get("/google/callback", authLimiter, googleAuthController.handleCallback);
 
 export default router;

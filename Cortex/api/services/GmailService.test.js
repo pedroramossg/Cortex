@@ -1,17 +1,32 @@
 import { jest } from '@jest/globals';
-import gmailService from './GmailService.js';
-import * as User from '../models/Auth.js';
-import { google } from 'googleapis';
 
-// Mock dependencies
-jest.mock('../models/Auth.js');
-jest.mock('googleapis');
-jest.mock('../config/redis.js', () => ({
-    __esModule: true,
+// Mock dependencies using jest.unstable_mockModule for ESM
+jest.unstable_mockModule('../models/Auth.js', () => ({
+    findByEmail: jest.fn(),
+    updateGoogleTokens: jest.fn()
+}));
+
+jest.unstable_mockModule('googleapis', () => ({
+    google: {
+        auth: {
+            OAuth2: jest.fn().mockImplementation(() => ({
+                setCredentials: jest.fn(),
+                on: jest.fn()
+            }))
+        },
+        gmail: jest.fn()
+    }
+}));
+
+jest.unstable_mockModule('../config/redis.js', () => ({
     default: {
         publish: jest.fn()
     }
 }));
+
+const { default: gmailService } = await import('./GmailService.js');
+const User = await import('../models/Auth.js');
+const { google } = await import('googleapis');
 
 describe('GmailService', () => {
     afterEach(() => {

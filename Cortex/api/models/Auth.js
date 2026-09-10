@@ -49,3 +49,12 @@ export async function updateGoogleTokens(userId, { google_access_token, google_r
 
     return result.rows[0];
 }
+
+export async function findById(id) {
+    const result = await db.query(
+        "SELECT id, name, email, google_access_token, google_refresh_token, created_at, updated_at FROM users WHERE id = $1",
+        [id]
+    );
+    if (result.rows.length === 0) return null;
+    return result.rows[0];
+}

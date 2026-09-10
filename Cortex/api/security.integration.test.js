@@ -1,14 +1,16 @@
 import { jest } from '@jest/globals';
 import request from 'supertest';
-import app from './server.js';
-import * as User from './models/Auth.js';
-import redisClient from './config/redis.js';
 import jwt from 'jsonwebtoken';
 
-jest.mock('./models/Auth.js');
-// We need to mock redis publish, setEx, get, del
-jest.mock('./config/redis.js', () => ({
-    __esModule: true,
+// Setup ESM module mocks before importing app and services
+jest.unstable_mockModule('./models/Auth.js', () => ({
+    createUser: jest.fn(),
+    findByEmail: jest.fn(),
+    upsertGoogleUser: jest.fn(),
+    updateGoogleTokens: jest.fn()
+}));
+
+jest.unstable_mockModule('./config/redis.js', () => ({
     default: {
         sendCommand: jest.fn(),
         setEx: jest.fn(),
@@ -18,29 +20,25 @@ jest.mock('./config/redis.js', () => ({
     }
 }));
 
-// Mock google-auth-library
-jest.mock('google-auth-library', () => {
-    return {
-        OAuth2Client: jest.fn().mockImplementation(() => {
-            return {
-                verifyIdToken: jest.fn().mockImplementation(async ({ idToken }) => {
-                    if (idToken === 'valid_google_token') {
-                        return {
-                            getPayload: () => ({ iss: 'https://accounts.google.com' })
-                        };
-                    }
-                    throw new Error("Invalid token");
-                })
-            };
+jest.unstable_mockModule('google-auth-library', () => ({
+    OAuth2Client: jest.fn().mockImplementation(() => ({
+        verifyIdToken: jest.fn().mockImplementation(async ({ idToken }) => {
+            if (idToken === 'valid_google_token') {
+                return {
+                    getPayload: () => ({ iss: 'https://accounts.google.com' })
+                };
+            }
+            throw new Error("Invalid token");
         })
-    };
-});
+    }))
+}));
 
-// Mock queue
-jest.mock('./jobs/queue.js', () => ({
+jest.unstable_mockModule('./jobs/queue.js', () => ({
     addGmailWebhookJob: jest.fn()
 }));
 
+const { default: app } = await import('./server.js');
+const User = await import('./models/Auth.js');
 const mockRedis = (await import('./config/redis.js')).default;
 const { addGmailWebhookJob } = await import('./jobs/queue.js');
 
@@ -66,7 +64,7 @@ describe('Security & DevSecOps Integration Tests', () => {
 
             expect(response.status).toBe(400);
             expect(response.body.success).toBe(false);
-            expect(response.body.errors[0].message).toContain("Unrecognized key(s) in object: 'admin'");
+            expect(response.body.errors[0].message).toMatch(/Unrecognized key.*admin/);
         });
 
         it('should return 400 when sending a password larger than 255 chars (DoS Protection)', async () => {

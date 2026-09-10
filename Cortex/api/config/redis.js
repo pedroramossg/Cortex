@@ -10,6 +10,8 @@ const redisClient = createClient({
 redisClient.on("error", (err) => console.log("Redis Client Error", err))
 redisClient.on("connect", () => console.log("Redis Client Connected"))
 
-await redisClient.connect()
+if (process.env.NODE_ENV !== 'test') {
+    await redisClient.connect().catch((err) => console.log("Redis Client Error", err));
+}
 
 export default redisClient
