@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 import * as User from '../models/Auth.js';
 import redisClient from '../config/redis.js';
+import triageService from './TriageService.js';
 
 class GmailService {
     /**
@@ -111,8 +112,19 @@ class GmailService {
 
         console.log(`[GmailService] Parsed email for User ${userId}: ${subject}`);
 
-        // TODO: Enqueue or dispatch via WebSocket to Tauri
-        // Example: Push to a Redis stream or Pub/Sub channel that a WebSocket server is listening to
+        // Classify and persist in triage pipeline with debounced cache invalidation
+        await triageService.processAndTriage({
+            messageId,
+            threadId: messageData.threadId || messageId,
+            from,
+            recipient: headers.find(h => h.name === 'To')?.value || '',
+            subject,
+            snippet,
+            userId,
+            receivedAt: new Date(parseInt(messageData.internalDate || Date.now()))
+        });
+
+        // Dispatch via WebSocket channel to Tauri
         const channel = `ws:user:${userId}`;
         await redisClient.publish(channel, JSON.stringify({
             type: 'NEW_EMAIL',

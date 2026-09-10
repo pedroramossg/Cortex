@@ -22,12 +22,18 @@ setupSwagger(app);
 import webhookRoutes from './routes/WebhookRoutes.js';
 import calendarRoutes from './routes/CalendarRoutes.js';
 import obsidianRoutes from './routes/ObsidianRoutes.js';
+import briefingRoutes from './routes/BriefingRoutes.js';
+import contactRoutes from './routes/ContactRoutes.js';
+import gmailDraftRoutes from './routes/GmailDraftRoutes.js';
 
 app.use('/health', healthRouter);
 app.use('/auth', authRoutes);
 app.use('/webhooks', webhookRoutes);
 app.use('/calendar', calendarRoutes);
 app.use('/obsidian', obsidianRoutes);
+app.use('/briefing', briefingRoutes);
+app.use('/contacts', contactRoutes);
+app.use('/gmail', gmailDraftRoutes);
 
 app.use(errorHandler);
 

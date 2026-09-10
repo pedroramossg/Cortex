@@ -17,7 +17,8 @@ async function runMigrations() {
 
     try {
         console.log('Running migrations...');
-        const schemaPath = path.join(process.cwd(), 'db', 'schema.sql')
+        const currentDir = path.dirname(new URL(import.meta.url).pathname);
+        const schemaPath = path.join(currentDir, 'db', 'schema.sql');
         const schemaSql = fs.readFileSync(schemaPath, 'utf8');
 
         await client.query(schemaSql)

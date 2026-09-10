@@ -28,3 +28,13 @@ export const webhookLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
 });
+
+export const llmLimiter = rateLimit({
+    store: createStore(),
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    max: 15, // Limit AI requests to 15 per 5 minutes
+    message: { success: false, message: 'Too many AI requests. Please slow down and try again in 5 minutes.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+

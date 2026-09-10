@@ -24,6 +24,12 @@ jest.unstable_mockModule('../config/redis.js', () => ({
     }
 }));
 
+jest.unstable_mockModule('./TriageService.js', () => ({
+    default: {
+        processAndTriage: jest.fn().mockResolvedValue({ id: 'triaged-1', urgency: 'MEDIUM' })
+    }
+}));
+
 const { default: gmailService } = await import('./GmailService.js');
 const User = await import('../models/Auth.js');
 const { google } = await import('googleapis');
