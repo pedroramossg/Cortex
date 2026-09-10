@@ -42,3 +42,23 @@ export const removeCache = async (req, res, customKey = null) => {
         console.error("Cache error: " + err);
     }
 };
+
+export const purgeUserCache = async (userId) => {
+    try {
+        const patterns = [
+            `user_session:${userId}*`,
+            `briefing:${userId}*`,
+            `contact_dossier:${userId}*`
+        ];
+        for (const pattern of patterns) {
+            if (typeof redisClient.keys === 'function') {
+                const keys = await redisClient.keys(pattern);
+                if (keys && keys.length > 0) {
+                    await redisClient.del(keys);
+                }
+            }
+        }
+    } catch (err) {
+        console.warn("[Cache] Warning purging user cache:", err.message);
+    }
+};

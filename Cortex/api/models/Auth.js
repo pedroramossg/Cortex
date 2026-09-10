@@ -58,3 +58,16 @@ export async function findById(id) {
     if (result.rows.length === 0) return null;
     return result.rows[0];
 }
+
+export async function clearGoogleTokens(userId) {
+    const result = await db.query(`
+        UPDATE users 
+        SET google_access_token = NULL, 
+            google_refresh_token = NULL, 
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING id, name, email;
+    `, [userId]);
+
+    return result.rows[0];
+}

@@ -85,4 +85,22 @@ router.post("/logout", requireAuth, authController.logout);
 router.get("/google", googleAuthController.redirectUrl);
 router.get("/google/callback", authLimiter, googleAuthController.handleCallback);
 
+/**
+ * @swagger
+ * /auth/google/disconnect:
+ *   post:
+ *     summary: Disconnect Google Account & Revoke Data
+ *     description: Revokes Google OAuth access/refresh tokens and purges cached Google data
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Google account disconnected successfully
+ *       401:
+ *         description: Unauthorized
+ *     tags:
+ *       - Auth
+ */
+router.post("/google/disconnect", requireAuth, googleAuthController.disconnectGoogle);
+
 export default router;

@@ -1,7 +1,7 @@
 import googleAuthService from '../services/GoogleAuthService.js';
 import * as User from '../models/Auth.js';
 import jwt from 'jsonwebtoken';
-import { setCache } from '../middleware/cacheMiddleware.js';
+import { setCache, purgeUserCache } from '../middleware/cacheMiddleware.js';
 
 const generateToken = (user) => {
     if (!process.env.JWT_SECRET) {
@@ -60,6 +60,37 @@ export const handleCallback = async (req, res, next) => {
             </html>
         `);
 
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const disconnectGoogle = async (req, res, next) => {
+    try {
+        const userId = req.user.id;
+        const user = await User.findById(userId);
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: "User not found" });
+        }
+
+        // 1. Revoke tokens with Google if present
+        if (user.google_access_token) {
+            await googleAuthService.revokeToken(user.google_access_token);
+        } else if (user.google_refresh_token) {
+            await googleAuthService.revokeToken(user.google_refresh_token);
+        }
+
+        // 2. Clear Google tokens in PostgreSQL
+        await User.clearGoogleTokens(userId);
+
+        // 3. Purge cached Google data from Redis
+        await purgeUserCache(userId);
+
+        return res.status(200).json({
+            success: true,
+            message: "Google account disconnected and cached data cleared successfully"
+        });
     } catch (error) {
         next(error);
     }

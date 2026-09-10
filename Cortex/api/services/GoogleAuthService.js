@@ -19,7 +19,8 @@ export class GoogleAuthService {
             'https://www.googleapis.com/auth/userinfo.email',
             'https://www.googleapis.com/auth/gmail.readonly',
             'https://www.googleapis.com/auth/gmail.compose', // For creating drafts
-            'https://www.googleapis.com/auth/calendar' // Read/Write for creating events
+            'https://www.googleapis.com/auth/calendar.events', // Least privilege: read/write events only, without full calendar admin
+            'https://www.googleapis.com/auth/contacts.readonly' // Read-only access for contact dossier sync
         ];
 
         return this.oauth2Client.generateAuthUrl({
@@ -27,6 +28,19 @@ export class GoogleAuthService {
             prompt: 'consent', // Force consent screen to guarantee refresh_token on every login during dev
             scope: scopes
         });
+    }
+
+    /**
+     * Revoke access/refresh token with Google OAuth2
+     * @param {string} token 
+     */
+    async revokeToken(token) {
+        if (!token) return;
+        try {
+            await this.oauth2Client.revokeToken(token);
+        } catch (error) {
+            console.warn('[GoogleAuthService] Token revocation warning:', error.message);
+        }
     }
 
     /**

@@ -6,8 +6,10 @@ import jwt from 'jsonwebtoken';
 jest.unstable_mockModule('./models/Auth.js', () => ({
     createUser: jest.fn(),
     findByEmail: jest.fn(),
+    findById: jest.fn(),
     upsertGoogleUser: jest.fn(),
-    updateGoogleTokens: jest.fn()
+    updateGoogleTokens: jest.fn(),
+    clearGoogleTokens: jest.fn()
 }));
 
 jest.unstable_mockModule('./config/redis.js', () => ({
@@ -16,7 +18,16 @@ jest.unstable_mockModule('./config/redis.js', () => ({
         setEx: jest.fn(),
         get: jest.fn(),
         del: jest.fn(),
-        publish: jest.fn()
+        publish: jest.fn(),
+        keys: jest.fn().mockResolvedValue([])
+    }
+}));
+
+jest.unstable_mockModule('./services/GoogleAuthService.js', () => ({
+    default: {
+        getAuthUrl: jest.fn(),
+        handleCallback: jest.fn(),
+        revokeToken: jest.fn().mockResolvedValue()
     }
 }));
 
@@ -40,6 +51,7 @@ jest.unstable_mockModule('./jobs/queue.js', () => ({
 const { default: app } = await import('./server.js');
 const User = await import('./models/Auth.js');
 const mockRedis = (await import('./config/redis.js')).default;
+const googleAuthService = (await import('./services/GoogleAuthService.js')).default;
 const { addGmailWebhookJob } = await import('./jobs/queue.js');
 
 describe('Security & DevSecOps Integration Tests', () => {
@@ -166,6 +178,57 @@ describe('Security & DevSecOps Integration Tests', () => {
             // but here we ensure BullMQ enqueue was called 5 times.
             // (BullMQ's jobId guarantees idempotency, which is handled at the queue layer).
             expect(addGmailWebhookJob).toHaveBeenCalledTimes(5);
+        });
+    });
+
+    describe('Google API Compliance & Data Purge (POST /auth/google/disconnect)', () => {
+        it('should return 401 when calling disconnect without authorization', async () => {
+            const response = await request(app).post('/auth/google/disconnect');
+
+            expect(response.status).toBe(401);
+            expect(response.body.message).toBe('Authentication required');
+        });
+
+        it('should return 404 when user is not found in database', async () => {
+            const token = jwt.sign({ id: 'non-existent-user', email: 'test@example.com' }, process.env.JWT_SECRET, { expiresIn: '1h' });
+            User.findById.mockResolvedValueOnce(null);
+
+            const response = await request(app)
+                .post('/auth/google/disconnect')
+                .set('Authorization', `Bearer ${token}`);
+
+            expect(response.status).toBe(404);
+            expect(response.body.message).toBe('User not found');
+        });
+
+        it('should revoke Google tokens, clear tokens in DB, purge Redis cache, and return 200', async () => {
+            const token = jwt.sign({ id: 'user-google-1', email: 'user@cortex.dev' }, process.env.JWT_SECRET, { expiresIn: '1h' });
+            
+            User.findById.mockResolvedValueOnce({
+                id: 'user-google-1',
+                email: 'user@cortex.dev',
+                google_access_token: 'google_access_token_xyz',
+                google_refresh_token: 'google_refresh_token_abc'
+            });
+            User.clearGoogleTokens.mockResolvedValueOnce({ id: 'user-google-1' });
+            mockRedis.keys.mockResolvedValueOnce(['briefing:user-google-1:today', 'contact_dossier:user-google-1:test']);
+
+            const response = await request(app)
+                .post('/auth/google/disconnect')
+                .set('Authorization', `Bearer ${token}`);
+
+            expect(response.status).toBe(200);
+            expect(response.body.success).toBe(true);
+            expect(response.body.message).toContain('Google account disconnected');
+
+            // Assert token revocation with Google was called
+            expect(googleAuthService.revokeToken).toHaveBeenCalledWith('google_access_token_xyz');
+
+            // Assert database tokens were cleared
+            expect(User.clearGoogleTokens).toHaveBeenCalledWith('user-google-1');
+
+            // Assert Redis cache keys were cleared
+            expect(mockRedis.del).toHaveBeenCalled();
         });
     });
 });
