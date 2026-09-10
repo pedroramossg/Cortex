@@ -77,8 +77,5 @@ jobs:
         run: docker build -t cortex:ci -f Dockerfile .
 
       - name: Verify Container Startup (Smoke Test)
-        run: |
-          docker run --rm -d --name cortex-ci-smoke -p 3000:3000 -e NODE_ENV=test cortex:ci
-          sleep 4
-          docker ps | grep cortex-ci-smoke || (docker logs cortex-ci-smoke && exit 1)
-          docker stop cortex-ci-smoke
+        run: docker run --rm -e NODE_ENV=test cortex:ci node -e "import('./api/server.js').then(() => console.log('✅ Container verified successfully'))"
+

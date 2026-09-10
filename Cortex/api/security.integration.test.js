@@ -1,27 +1,11 @@
 import { jest } from '@jest/globals';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { sharedAuthMock, sharedRedisMock, testRedisStore, mockUsers, resetTestMocks } from './testUtils/setupMocks.js';
 
 // Setup ESM module mocks before importing app and services
-jest.unstable_mockModule('./models/Auth.js', () => ({
-    createUser: jest.fn(),
-    findByEmail: jest.fn(),
-    findById: jest.fn(),
-    upsertGoogleUser: jest.fn(),
-    updateGoogleTokens: jest.fn(),
-    clearGoogleTokens: jest.fn()
-}));
-
-jest.unstable_mockModule('./config/redis.js', () => ({
-    default: {
-        sendCommand: jest.fn(),
-        setEx: jest.fn(),
-        get: jest.fn(),
-        del: jest.fn(),
-        publish: jest.fn(),
-        keys: jest.fn().mockResolvedValue([])
-    }
-}));
+jest.unstable_mockModule('./models/Auth.js', () => sharedAuthMock);
+jest.unstable_mockModule('./config/redis.js', () => ({ default: sharedRedisMock }));
 
 jest.unstable_mockModule('./services/GoogleAuthService.js', () => ({
     default: {
@@ -61,6 +45,7 @@ describe('Security & DevSecOps Integration Tests', () => {
     });
 
     afterEach(() => {
+        resetTestMocks();
         jest.clearAllMocks();
     });
 
@@ -97,11 +82,8 @@ describe('Security & DevSecOps Integration Tests', () => {
         it('should block access to /auth/logout if JWT is in Redis blocklist', async () => {
             const token = jwt.sign({ id: 'user_1', email: 'test@example.com' }, process.env.JWT_SECRET, { expiresIn: '1h' });
             
-            // Mock Redis to return 'revoked' for this token
-            mockRedis.get.mockImplementation(async (key) => {
-                if (key && key.includes(token)) return 'revoked';
-                return null;
-            });
+            // Put token in test Redis blocklist store
+            testRedisStore.set(`blocklist:${token}`, 'revoked');
 
             const response = await request(app)
                 .post('/auth/logout')
@@ -194,7 +176,6 @@ describe('Security & DevSecOps Integration Tests', () => {
 
         it('should return 404 when user is not found in database', async () => {
             const token = jwt.sign({ id: 'non-existent-user', email: 'test@example.com' }, process.env.JWT_SECRET, { expiresIn: '1h' });
-            User.findById.mockResolvedValueOnce(null);
 
             const response = await request(app)
                 .post('/auth/google/disconnect')
@@ -207,19 +188,8 @@ describe('Security & DevSecOps Integration Tests', () => {
         it('should revoke Google tokens, clear tokens in DB, purge Redis cache, and return 200', async () => {
             const token = jwt.sign({ id: 'user-google-1', email: 'user@cortex.dev' }, process.env.JWT_SECRET, { expiresIn: '1h' });
             
-            User.findById.mockImplementation(async (id) => {
-                if (id === 'user-google-1') {
-                    return {
-                        id: 'user-google-1',
-                        email: 'user@cortex.dev',
-                        google_access_token: 'google_access_token_xyz',
-                        google_refresh_token: 'google_refresh_token_abc'
-                    };
-                }
-                return null;
-            });
-            User.clearGoogleTokens.mockImplementation(async (id) => ({ id }));
-            mockRedis.keys.mockImplementation(async () => ['briefing:user-google-1:today', 'contact_dossier:user-google-1:test']);
+            testRedisStore.set('briefing:user-google-1:today', 'cached-briefing');
+            testRedisStore.set('contact_dossier:user-google-1:test', 'cached-dossier');
 
             const response = await request(app)
                 .post('/auth/google/disconnect')
@@ -234,6 +204,7 @@ describe('Security & DevSecOps Integration Tests', () => {
 
             // Assert database tokens were cleared
             expect(User.clearGoogleTokens).toHaveBeenCalledWith('user-google-1');
+            expect(mockUsers['user-google-1'].google_access_token).toBeNull();
 
             // Assert Redis cache keys were cleared
             expect(mockRedis.del).toHaveBeenCalled();

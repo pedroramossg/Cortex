@@ -1,20 +1,12 @@
 import { jest } from '@jest/globals';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { sharedAuthMock, sharedRedisMock, resetTestMocks } from './testUtils/setupMocks.js';
 
-jest.unstable_mockModule('./models/Auth.js', () => ({
-    findById: jest.fn().mockResolvedValue({ id: 'user-obsidian-1', email: 'obsidian@cortex.dev' }),
-    updateGoogleTokens: jest.fn()
-}));
+jest.unstable_mockModule('./models/Auth.js', () => sharedAuthMock);
 
 jest.unstable_mockModule('./config/redis.js', () => ({
-    default: {
-        sendCommand: jest.fn(),
-        setEx: jest.fn(),
-        get: jest.fn().mockResolvedValue(null),
-        del: jest.fn(),
-        publish: jest.fn()
-    }
+    default: sharedRedisMock
 }));
 
 const { default: app } = await import('./server.js');
@@ -28,6 +20,7 @@ describe('Obsidian Integration Tests', () => {
     });
 
     afterEach(() => {
+        resetTestMocks();
         jest.clearAllMocks();
     });
 

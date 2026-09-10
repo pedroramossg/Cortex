@@ -1,41 +1,13 @@
 import { jest } from '@jest/globals';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { sharedAuthMock, sharedRedisMock, resetTestMocks } from './testUtils/setupMocks.js';
 
 // Setup ESM module mocks
-const mockUserWithTokens = {
-    id: 'user-calendar-1',
-    name: 'Tech Lead',
-    email: 'techlead@cortex.dev',
-    google_access_token: 'valid_access_token',
-    google_refresh_token: 'valid_refresh_token'
-};
-
-const mockUserNoTokens = {
-    id: 'user-calendar-2',
-    name: 'No Tokens User',
-    email: 'notokens@cortex.dev',
-    google_access_token: null,
-    google_refresh_token: null
-};
-
-jest.unstable_mockModule('./models/Auth.js', () => ({
-    findById: jest.fn().mockImplementation(async (id) => {
-        if (id === 'user-calendar-1') return mockUserWithTokens;
-        if (id === 'user-calendar-2') return mockUserNoTokens;
-        return null;
-    }),
-    updateGoogleTokens: jest.fn()
-}));
+jest.unstable_mockModule('./models/Auth.js', () => sharedAuthMock);
 
 jest.unstable_mockModule('./config/redis.js', () => ({
-    default: {
-        sendCommand: jest.fn(),
-        setEx: jest.fn(),
-        get: jest.fn().mockResolvedValue(null), // no blocklist
-        del: jest.fn(),
-        publish: jest.fn()
-    }
+    default: sharedRedisMock
 }));
 
 const mockInsert = jest.fn();
@@ -72,6 +44,7 @@ describe('Calendar Integration Tests', () => {
     });
 
     afterEach(() => {
+        resetTestMocks();
         jest.clearAllMocks();
     });
 

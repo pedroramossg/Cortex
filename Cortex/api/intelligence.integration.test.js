@@ -1,22 +1,9 @@
 import { jest } from '@jest/globals';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { sharedAuthMock, sharedRedisMock, resetTestMocks } from './testUtils/setupMocks.js';
 
-const mockUser = {
-    id: 'user-intel-1',
-    name: 'Pedro Ramos',
-    email: 'pedro@cortex.dev',
-    google_access_token: 'valid_access_token',
-    google_refresh_token: 'valid_refresh_token'
-};
-
-jest.unstable_mockModule('./models/Auth.js', () => ({
-    findById: jest.fn().mockImplementation(async (id) => {
-        if (id === 'user-intel-1') return mockUser;
-        return null;
-    }),
-    updateGoogleTokens: jest.fn()
-}));
+jest.unstable_mockModule('./models/Auth.js', () => sharedAuthMock);
 
 jest.unstable_mockModule('./models/TriageModel.js', () => ({
     upsertTriagedMessage: jest.fn().mockResolvedValue({ id: 'msg-1' }),
@@ -32,13 +19,7 @@ jest.unstable_mockModule('./models/TriageModel.js', () => ({
 }));
 
 jest.unstable_mockModule('./config/redis.js', () => ({
-    default: {
-        sendCommand: jest.fn().mockResolvedValue('OK'),
-        setEx: jest.fn().mockResolvedValue('OK'),
-        get: jest.fn().mockResolvedValue(null),
-        del: jest.fn().mockResolvedValue(1),
-        publish: jest.fn().mockResolvedValue(1)
-    }
+    default: sharedRedisMock
 }));
 
 const mockCalendarList = jest.fn();
@@ -84,6 +65,7 @@ describe('Cortex Intelligence Integration Tests', () => {
     });
 
     afterEach(() => {
+        resetTestMocks();
         jest.clearAllMocks();
     });
 
