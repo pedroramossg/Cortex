@@ -78,7 +78,7 @@ export function DockRail({
   return (
     <aside
       aria-label="Cortex Navigation Rail"
-      className="dock-surface fixed right-3 top-1/2 -translate-y-1/2 z-50 flex flex-col items-center py-3 px-2 rounded-2xl select-none pointer-events-auto"
+      className="dock-surface fixed right-0 top-1/2 -translate-y-1/2 z-50 flex flex-col items-center py-3 px-2 rounded-l-2xl rounded-r-none border-r-0 select-none pointer-events-auto"
     >
       {/* Top Brand Logo / Pulse Indicator */}
       <div className="mb-4 flex items-center justify-center">

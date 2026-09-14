@@ -13,14 +13,29 @@
     "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "main",
         "title": "cortex",
-        "width": 800,
-        "height": 600,
+        "width": 500,
+        "height": 680,
         "decorations": false,
         "transparent": true,
         "shadow": false,
         "alwaysOnTop": true,
-        "skipTaskbar": true
+        "skipTaskbar": true,
+        "visible": true
+      },
+      {
+        "label": "tray_popover",
+        "title": "cortex_tray",
+        "url": "index.html?view=tray",
+        "width": 320,
+        "height": 420,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false
       }
     ],
     "security": {
