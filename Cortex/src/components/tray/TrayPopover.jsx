@@ -6,7 +6,8 @@ import {
   FileText, 
   Sidebar as SidebarIcon,
   RefreshCw,
-  Plus
+  Plus,
+  Power
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -164,6 +165,16 @@ export function TrayPopover() {
             title="Nova Nota Obsidian"
           >
             <Plus className="w-3.5 h-3.5" />
+          </Button>
+
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 px-2.5 text-[11px] bg-white/[0.04] border-white/10 hover:bg-red-500/20 hover:border-red-500/30 text-white/50 hover:text-red-300 transition-colors"
+            title="Encerrar Cortex"
+            onClick={() => invoke("exit_app")}
+          >
+            <Power className="w-3.5 h-3.5" />
           </Button>
         </div>
       </div>

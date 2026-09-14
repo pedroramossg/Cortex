@@ -9,10 +9,51 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+/// Pure helper to compute right-docked logical coordinates given monitor and window geometry
+pub fn compute_sidebar_position(
+    mon_x: f64,
+    mon_y: f64,
+    mon_width: f64,
+    mon_height: f64,
+    win_width: f64,
+    win_height: f64,
+) -> (f64, f64) {
+    let x = mon_x + mon_width - win_width;
+    let y = mon_y + (mon_height - win_height) / 2.0;
+    (x, y)
+}
+
+/// Pure helper to compute tray popover position centered below the menu bar icon with screen bounds clamping
+pub fn compute_tray_popover_position(
+    icon_x: f64,
+    icon_y: f64,
+    icon_width: f64,
+    icon_height: f64,
+    win_width: f64,
+    mon_x: f64,
+    mon_width: f64,
+) -> (f64, f64) {
+    let mut x = icon_x + (icon_width / 2.0) - (win_width / 2.0);
+    let y = icon_y + icon_height + 6.0;
+
+    let max_x = mon_x + mon_width - win_width - 12.0;
+    let min_x = mon_x + 12.0;
+    if x > max_x {
+        x = max_x;
+    }
+    if x < min_x {
+        x = min_x;
+    }
+    (x, y)
+}
+
+/// Check if an unfocus event happened within the debounce threshold (anti-race condition)
+pub fn is_debounce_unfocus(elapsed_millis: u128, threshold_millis: u128) -> bool {
+    elapsed_millis < threshold_millis
+}
+
 /// Calculate physical coordinates through current_monitor() with exact Retina scale_factor
-/// and position the Sidebar glued flush against the right edge of the display:
-/// x = screen_x + screen_width - window_width
-/// y = screen_y + (screen_height - window_height) / 2
+/// and position the Sidebar glued flush against the right edge of the display
 fn position_sidebar_right(window: &tauri::WebviewWindow) -> Result<(), Box<dyn std::error::Error>> {
     let scale_factor = window.scale_factor()?;
     if let Some(monitor) = window.current_monitor()? {
@@ -20,8 +61,14 @@ fn position_sidebar_right(window: &tauri::WebviewWindow) -> Result<(), Box<dyn s
         let mon_size = monitor.size().to_logical::<f64>(scale_factor);
         let win_size = window.outer_size()?.to_logical::<f64>(scale_factor);
 
-        let x = mon_pos.x + mon_size.width - win_size.width;
-        let y = mon_pos.y + (mon_size.height - win_size.height) / 2.0;
+        let (x, y) = compute_sidebar_position(
+            mon_pos.x,
+            mon_pos.y,
+            mon_size.width,
+            mon_size.height,
+            win_size.width,
+            win_size.height,
+        );
 
         window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)))?;
     }
@@ -57,14 +104,20 @@ fn is_sidebar_visible(app: tauri::AppHandle) -> Result<bool, String> {
     }
 }
 
+/// Gracefully exit the application on explicit user request
+#[tauri::command]
+fn exit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let last_unfocus = Arc::new(Mutex::new(None::<Instant>));
     let last_unfocus_tray = Arc::clone(&last_unfocus);
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, toggle_sidebar, is_sidebar_visible])
+        .invoke_handler(tauri::generate_handler![greet, toggle_sidebar, is_sidebar_visible, exit_app])
         .setup(move |app| {
             // Position the main Sidebar flush on the right edge on launch
             if let Some(main_win) = app.get_webview_window("main") {
@@ -97,7 +150,7 @@ pub fn run() {
                             // Check if focus loss was triggered by clicking the tray icon
                             let was_just_unfocused = if let Ok(lock) = unfocus_ref.lock() {
                                 if let Some(time) = *lock {
-                                    time.elapsed().as_millis() < 250
+                                    is_debounce_unfocus(time.elapsed().as_millis(), 250)
                                 } else {
                                     false
                                 }
@@ -121,22 +174,24 @@ pub fn run() {
 
                                     if let Ok(win_size) = tray_window.outer_size() {
                                         let win_size_logical = win_size.to_logical::<f64>(scale_factor);
-                                        let mut x = icon_pos.x + (icon_size.width / 2.0) - (win_size_logical.width / 2.0);
-                                        let y = icon_pos.y + icon_size.height + 6.0;
 
-                                        // Ensure popover stays within screen horizontal boundaries
-                                        if let Ok(Some(monitor)) = tray_window.current_monitor() {
+                                        let (mon_x, mon_width) = if let Ok(Some(monitor)) = tray_window.current_monitor() {
                                             let mon_pos = monitor.position().to_logical::<f64>(scale_factor);
                                             let mon_size = monitor.size().to_logical::<f64>(scale_factor);
-                                            let max_x = mon_pos.x + mon_size.width - win_size_logical.width - 12.0;
-                                            let min_x = mon_pos.x + 12.0;
-                                            if x > max_x {
-                                                x = max_x;
-                                            }
-                                            if x < min_x {
-                                                x = min_x;
-                                            }
-                                        }
+                                            (mon_pos.x, mon_size.width)
+                                        } else {
+                                            (0.0, 1920.0)
+                                        };
+
+                                        let (x, y) = compute_tray_popover_position(
+                                            icon_pos.x,
+                                            icon_pos.y,
+                                            icon_size.width,
+                                            icon_size.height,
+                                            win_size_logical.width,
+                                            mon_x,
+                                            mon_width,
+                                        );
 
                                         let _ = tray_window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
                                     }
@@ -153,16 +208,69 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(move |window, event| {
-            // Auto-hide on blur ONLY for tray_popover (Sidebar remains docked unless toggled)
-            if window.label() == "tray_popover" {
-                if let tauri::WindowEvent::Focused(false) = event {
-                    if let Ok(mut lock) = last_unfocus.lock() {
-                        *lock = Some(Instant::now());
-                    }
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    // Prevent window destruction on close request; hide instead
                     let _ = window.hide();
+                    api.prevent_close();
                 }
+                tauri::WindowEvent::Focused(false) => {
+                    // Auto-hide on blur ONLY for tray_popover (Sidebar remains docked unless toggled)
+                    if window.label() == "tray_popover" {
+                        if let Ok(mut lock) = last_unfocus.lock() {
+                            *lock = Some(Instant::now());
+                        }
+                        let _ = window.hide();
+                    }
+                }
+                _ => {}
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    // Prevent app from exiting when windows are hidden or lose focus; keep resident in system tray
+    app.run(|_app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            api.prevent_exit();
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sidebar_right_dock_positioning() {
+        let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 500.0, 680.0);
+        assert_eq!(x, 1012.0); // 1512 - 500 = 1012 (glued exactly flush to right edge)
+        assert_eq!(y, 151.0);  // (982 - 680) / 2 = 151 (vertically centered)
+    }
+
+    #[test]
+    fn test_sidebar_multi_monitor_offset() {
+        let (x, y) = compute_sidebar_position(1512.0, 0.0, 1920.0, 1080.0, 500.0, 680.0);
+        assert_eq!(x, 2932.0); // 1512 + 1920 - 500 = 2932
+        assert_eq!(y, 200.0);  // (1080 - 680) / 2 = 200
+    }
+
+    #[test]
+    fn test_tray_popover_centered_positioning() {
+        let (x, y) = compute_tray_popover_position(1200.0, 0.0, 22.0, 22.0, 320.0, 0.0, 1512.0);
+        assert_eq!(x, 1051.0); // 1200 + 11 - 160 = 1051
+        assert_eq!(y, 28.0);   // 0 + 22 + 6 = 28
+    }
+
+    #[test]
+    fn test_tray_popover_clamping_right_edge() {
+        let (x, _) = compute_tray_popover_position(1490.0, 0.0, 22.0, 22.0, 320.0, 0.0, 1512.0);
+        assert_eq!(x, 1180.0); // clamped to 1512 - 320 - 12 = 1180
+    }
+
+    #[test]
+    fn test_unfocus_race_condition_debounce() {
+        assert!(is_debounce_unfocus(50, 250));
+        assert!(!is_debounce_unfocus(300, 250));
+    }
 }
