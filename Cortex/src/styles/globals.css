@@ -124,11 +124,18 @@
   *::-webkit-scrollbar {
     display: none;
   }
+  html,
+  body,
+  #root {
+    background: transparent !important;
+    background-color: transparent !important;
+    margin: 0;
+    padding: 0;
+  }
   html {
     color-scheme: dark;
   }
   body {
-    background-color: transparent;
     color: #ffffff;
     font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
