@@ -11,21 +11,45 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 /**
  * TrayPopover: Menu Bar popover compacto (320x420px) para o macOS System Tray
- * Exibe status de integrações, resumo diário, atalhos e toggle da Sidebar.
+ * Exibe status de integrações, resumo diário, atalhos, toggle da Sidebar e presets de posição.
  */
 export function TrayPopover() {
   const [isSidebarActive, setIsSidebarActive] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [dockPreset, setDockPreset] = useState("Right");
 
   useEffect(() => {
     // Consulta o estado inicial da Sidebar
     invoke("is_sidebar_visible")
       .then((visible) => setIsSidebarActive(Boolean(visible)))
       .catch(() => setIsSidebarActive(true));
+
+    // Consulta preset ativo
+    invoke("get_dock_preset")
+      .then((preset) => {
+        if (preset) setDockPreset(preset);
+      })
+      .catch(() => {});
+
+    // Sincroniza preset quando alterado pelo Rust ou por arrasto
+    let unlisten;
+    listen("dock-preset-changed", (event) => {
+      if (event.payload) {
+        setDockPreset(event.payload);
+      }
+    }).then((un) => {
+      unlisten = un;
+    });
+
+    return () => {
+      if (unlisten) unlisten();
+    };
   }, []);
 
   const handleToggleSidebar = async () => {
@@ -34,6 +58,16 @@ export function TrayPopover() {
       setIsSidebarActive(Boolean(newState));
     } catch (err) {
       console.error("Falha ao alternar Sidebar:", err);
+    }
+  };
+
+  const handlePresetChange = async (val) => {
+    if (!val) return;
+    try {
+      setDockPreset(val);
+      await invoke("set_dock_preset", { preset: val });
+    } catch (err) {
+      console.error("Falha ao aplicar preset do Dock:", err);
     }
   };
 
@@ -144,6 +178,36 @@ export function TrayPopover() {
             {isSidebarActive ? "Visível" : "Oculta"}
           </Badge>
         </button>
+
+        {/* Seletor de Presets de Posição do Dock */}
+        <div className="w-full flex items-center justify-between p-1.5 px-2.5 rounded-xl bg-white/[0.04] border border-white/10">
+          <span className="text-[11px] text-white/60 font-medium">Ancoragem</span>
+          <ToggleGroup
+            type="single"
+            value={dockPreset === "Custom" ? "" : dockPreset}
+            onValueChange={handlePresetChange}
+            className="flex items-center gap-0.5 bg-white/[0.04] border border-white/10 p-0.5 rounded-lg"
+          >
+            <ToggleGroupItem
+              value="Left"
+              className="h-5 px-2 text-[10px] text-white/70 rounded data-[state=on]:bg-blue-500/30 data-[state=on]:text-blue-200 data-[state=on]:border-blue-500/40 cursor-pointer"
+            >
+              Esquerda
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="TopCenter"
+              className="h-5 px-2 text-[10px] text-white/70 rounded data-[state=on]:bg-blue-500/30 data-[state=on]:text-blue-200 data-[state=on]:border-blue-500/40 cursor-pointer"
+            >
+              Notch
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="Right"
+              className="h-5 px-2 text-[10px] text-white/70 rounded data-[state=on]:bg-blue-500/30 data-[state=on]:text-blue-200 data-[state=on]:border-blue-500/40 cursor-pointer"
+            >
+              Direita
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
 
         {/* Quick Actions */}
         <div className="flex items-center gap-2">

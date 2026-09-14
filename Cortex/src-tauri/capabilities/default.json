@@ -5,6 +5,7 @@
   "windows": ["main", "tray_popover"],
   "permissions": [
     "core:default",
-    "opener:default"
+    "opener:default",
+    "core:window:allow-start-dragging"
   ]
 }

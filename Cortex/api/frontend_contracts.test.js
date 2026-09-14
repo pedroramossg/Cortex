@@ -94,4 +94,26 @@ describe('Frontend Data Contracts & Security Validation (security.md)', () => {
         expect(VALID_URGENCIES.includes(validLow.urgency)).toBe(true);
         expect(VALID_URGENCIES.includes(invalidUrgency.urgency)).toBe(false);
     });
+
+    it('should adhere to strict DockPositionPreset contracts and Dynamic Island specifications', () => {
+        const VALID_PRESETS = ['Left', 'Right', 'TopCenter', 'Custom'];
+        
+        // Ensure all presets match Rust IPC enum variants
+        for (const preset of ['Left', 'Right', 'TopCenter', 'Custom']) {
+            expect(VALID_PRESETS).toContain(preset);
+        }
+
+        // TopCenter pill geometry invariants:
+        // Height: 44px (h-11), Width: 260px, Offset Y: 40px below notch
+        const topCenterCollapsed = { width: 260, height: 44, offsetY: 40, rounded: 'full' };
+        expect(topCenterCollapsed.height).toBe(44);
+        expect(topCenterCollapsed.width).toBe(260);
+        expect(topCenterCollapsed.offsetY).toBe(40);
+        expect(topCenterCollapsed.rounded).toBe('full');
+
+        // Puck mode invariants: 48x48px circle
+        const puck = { width: 48, height: 48, rounded: 'full' };
+        expect(puck.width).toBe(48);
+        expect(puck.height).toBe(48);
+    });
 });

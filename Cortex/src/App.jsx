@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { DockRail } from "@/components/dock/DockRail";
 import { NotificationList } from "@/components/inbox/NotificationList";
 
@@ -8,18 +9,58 @@ function App() {
   const [activeTab, setActiveTab] = useState("inbox");
   const [isFlyoutOpen, setIsFlyoutOpen] = useState(false);
   const [highUrgencyCount, setHighUrgencyCount] = useState(3);
+  const [dockPreset, setDockPreset] = useState("Right");
+  const [isPuck, setIsPuck] = useState(false);
   const isFlyoutOpenRef = useRef(isFlyoutOpen);
   isFlyoutOpenRef.current = isFlyoutOpen;
 
-  // Garante que o estado inicial nativo seja colapsado (56px) para não bloquear a tela
+  // Garante que o estado inicial nativo seja colapsado (56px) e sincroniza preset
   useEffect(() => {
     invoke("set_sidebar_expanded", { expanded: false }).catch(() => {});
+    invoke("get_dock_preset")
+      .then((p) => {
+        if (p) setDockPreset(p);
+      })
+      .catch(() => {});
+
+    // Escuta alterações de preset emitidas pelo Rust (ex: TrayPopover ou free dragging)
+    let unlistenPreset;
+    listen("dock-preset-changed", (event) => {
+      if (event.payload) {
+        setDockPreset(event.payload);
+      }
+    }).then((un) => {
+      unlistenPreset = un;
+    });
+
+    // Escuta transição de modo puck (bolha de arrasto)
+    let unlistenPuck;
+    listen("dock-puck-mode", (event) => {
+      const active = Boolean(event.payload);
+      setIsPuck(active);
+      if (active) {
+        setIsFlyoutOpen(false);
+      }
+    }).then((un) => {
+      unlistenPuck = un;
+    });
+
+    // Listener nativo de mouseup para finalizar arrasto com precisão
+    const handleMouseUp = () => {
+      invoke("finish_dragging_puck").catch(() => {});
+    };
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      if (unlistenPreset) unlistenPreset();
+      if (unlistenPuck) unlistenPuck();
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
   }, []);
 
   const handleTabChange = useCallback(async (tab) => {
     setActiveTab(tab);
     if (!isFlyoutOpen) {
-      // Expansão: redimensiona para 376px imediatamente antes de exibir para dar espaço à animação
       try {
         await invoke("set_sidebar_expanded", { expanded: true });
       } catch (err) {
@@ -31,7 +72,6 @@ function App() {
 
   const handleToggleFlyout = useCallback(async () => {
     if (!isFlyoutOpen) {
-      // Expansão: invoca IPC do Tauri antes de renderizar o Flyout para preparar o canvas nativo
       try {
         await invoke("set_sidebar_expanded", { expanded: true });
       } catch (err) {
@@ -39,13 +79,11 @@ function App() {
       }
       setIsFlyoutOpen(true);
     } else {
-      // Colapso: apenas altera o estado React; o onExitComplete do AnimatePresence encolherá a janela
       setIsFlyoutOpen(false);
     }
   }, [isFlyoutOpen]);
 
   const handleExitComplete = useCallback(async () => {
-    // Redimensiona a janela nativa para 56px apenas após o término completo da animação de saída
     if (!isFlyoutOpenRef.current) {
       try {
         await invoke("set_sidebar_expanded", { expanded: false });
@@ -55,28 +93,57 @@ function App() {
     }
   }, []);
 
+  // Determina direção e classes do Flyout conforme o preset ativo
+  const isLeftHalf = typeof window !== "undefined" && (window.screenX || 0) < (window.screen?.availWidth || 1920) / 2;
+
+  let flyoutPositionClass = "fixed right-[56px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+  let flyoutInitialAnim = { opacity: 0, x: 20, scale: 0.98 };
+  let flyoutExitAnim = { opacity: 0, x: 16, scale: 0.98 };
+
+  if (dockPreset === "Left") {
+    flyoutPositionClass = "fixed left-[56px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+    flyoutInitialAnim = { opacity: 0, x: -20, scale: 0.98 };
+    flyoutExitAnim = { opacity: 0, x: -16, scale: 0.98 };
+  } else if (dockPreset === "TopCenter") {
+    flyoutPositionClass = "fixed top-[52px] left-1/2 -translate-x-1/2 w-[320px] h-[510px]";
+    flyoutInitialAnim = { opacity: 0, y: -16, scale: 0.98 };
+    flyoutExitAnim = { opacity: 0, y: -16, scale: 0.98 };
+  } else if (dockPreset === "Custom") {
+    if (isLeftHalf) {
+      flyoutPositionClass = "fixed left-[56px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+      flyoutInitialAnim = { opacity: 0, x: -20, scale: 0.98 };
+      flyoutExitAnim = { opacity: 0, x: -16, scale: 0.98 };
+    } else {
+      flyoutPositionClass = "fixed right-[56px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+      flyoutInitialAnim = { opacity: 0, x: 20, scale: 0.98 };
+      flyoutExitAnim = { opacity: 0, x: 16, scale: 0.98 };
+    }
+  }
+
   return (
     <div className="relative min-h-screen w-full bg-transparent overflow-hidden text-white select-none pointer-events-none">
-      {/* Lateral Dock Flutuante Ancorada no Limite Direito (56px) */}
+      {/* Lateral Dock Flutuante Ancorada conforme preset */}
       <DockRail
         activeTab={activeTab}
         onTabChange={handleTabChange}
         highUrgencyCount={highUrgencyCount}
         isOpen={isFlyoutOpen}
         onToggleFlyout={handleToggleFlyout}
+        preset={dockPreset}
+        isPuck={isPuck}
       />
 
-      {/* Flyout Panel Flutuante (Liquid Glass) Colado Imediatamente à Esquerda da Dock */}
+      {/* Flyout Panel Flutuante (Liquid Glass) */}
       <AnimatePresence mode="wait" onExitComplete={handleExitComplete}>
-        {isFlyoutOpen && (
+        {isFlyoutOpen && !isPuck && (
           <motion.aside
-            key="cortex-flyout"
-            initial={{ opacity: 0, x: 20, scale: 0.98 }}
-            animate={{ opacity: 1, x: 0, scale: 1 }}
-            exit={{ opacity: 0, x: 16, scale: 0.98 }}
+            key={`cortex-flyout-${dockPreset}`}
+            initial={flyoutInitialAnim}
+            animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
+            exit={flyoutExitAnim}
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             aria-label="Cortex Flyout Panel"
-            className="mac-vibrancy fixed right-[56px] top-1/2 -translate-y-1/2 w-[320px] h-[580px] rounded-2xl flex flex-col p-3 shadow-2xl z-40 pointer-events-auto"
+            className={`mac-vibrancy rounded-2xl flex flex-col p-3 shadow-2xl z-40 pointer-events-auto ${flyoutPositionClass}`}
           >
             {/* Header do Flyout */}
             <div className="flex items-center justify-between pb-2.5 border-b border-white/10 shrink-0">
