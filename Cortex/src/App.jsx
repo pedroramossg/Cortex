@@ -1,51 +1,59 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import { Button } from "@/components/ui/button";
-import "./App.css";
+import { DockRail } from "@/components/dock/DockRail";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
-
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  const [activeTab, setActiveTab] = useState("inbox");
+  const [isFlyoutOpen, setIsFlyoutOpen] = useState(true);
+  const [highUrgencyCount, setHighUrgencyCount] = useState(3);
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
+    <div className="relative min-h-screen w-full bg-transparent overflow-hidden text-white select-none">
+      {/* Lateral Dock Flutuante */}
+      <DockRail
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          setActiveTab(tab);
+          setIsFlyoutOpen(true);
         }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <Button type="submit">Greet</Button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+        highUrgencyCount={highUrgencyCount}
+        isOpen={isFlyoutOpen}
+        onToggleFlyout={() => setIsFlyoutOpen((prev) => !prev)}
+      />
+
+      {/* Flyout Panel Preview (Liquid Glass) */}
+      {isFlyoutOpen && (
+        <aside
+          aria-label="Cortex Flyout Panel"
+          className="mac-vibrancy fixed right-20 top-1/2 -translate-y-1/2 w-[380px] h-[580px] rounded-2xl flex flex-col p-5 shadow-2xl z-40"
+        >
+          <div className="flex items-center justify-between pb-3 border-b border-white/10">
+            <div>
+              <h2 className="text-sm font-semibold text-white tracking-tight">
+                {activeTab === "inbox" && "Inbox & Prioridades"}
+                {activeTab === "calendar" && "Calendário & Reuniões"}
+                {activeTab === "obsidian" && "Notas Obsidian"}
+                {activeTab === "settings" && "Configurações"}
+              </h2>
+              <p className="text-xs text-white/50">Cortex Intelligent Workspace</p>
+            </div>
+            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+              macOS HIG
+            </span>
+          </div>
+
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-6 gap-2">
+            <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center text-white/70">
+              ✨
+            </div>
+            <p className="text-xs text-white/60">
+              Fase 2 concluída com sucesso. <br />
+              Próximos passos: <strong className="text-white">AppSwitcherPills</strong> &{" "}
+              <strong className="text-white">NotificationList</strong>
+            </p>
+          </div>
+        </aside>
+      )}
+    </div>
   );
 }
 
