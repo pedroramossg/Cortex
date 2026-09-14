@@ -113,7 +113,7 @@ export function NotificationCard({
     <div
       onClick={onClick}
       className={cn(
-        "card-surface rounded-xl p-3 flex flex-col gap-2 cursor-pointer transition-all duration-150 relative select-none",
+        "card-surface rounded-xl p-2.5 flex flex-col gap-1.5 cursor-pointer transition-all duration-150 relative select-none",
         isSelected
           ? "border-blue-500/40 bg-white/[0.08] shadow-[inset_0_1px_0_0_rgba(59,130,246,0.2)]"
           : "border-white/10 hover:border-white/20 hover:bg-white/[0.06]"
@@ -121,25 +121,25 @@ export function NotificationCard({
     >
       {/* Header: Avatar, Remetente, Serviço e Timestamp */}
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
           <div className="relative shrink-0">
-            <Avatar className="w-7 h-7 bg-white/10 border border-white/15 text-[11px] font-semibold text-white">
+            <Avatar className="w-6 h-6 bg-white/10 border border-white/15 text-[10px] font-semibold text-white">
               <AvatarFallback className="bg-gradient-to-br from-white/15 to-white/5 text-white">
                 {initials}
               </AvatarFallback>
             </Avatar>
             {/* Unread indicator dot */}
             {urgency === "HIGH" && (
-              <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
+              <span className="absolute -top-0.5 -right-0.5 flex h-1.5 w-1.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500" />
               </span>
             )}
           </div>
 
           <div className="min-w-0 flex flex-col">
             <div className="flex items-center gap-1.5">
-              <span className="text-xs font-semibold text-white/95 truncate">
+              <span className="text-[12px] font-semibold text-white/95 truncate">
                 {displayName}
               </span>
               <ServiceIcon service={service} />
@@ -156,18 +156,18 @@ export function NotificationCard({
       </div>
 
       {/* Snippet de Texto Seguro (Anti-XSS: Zero dangerouslySetInnerHTML) */}
-      <p className="text-[11px] text-white/60 line-clamp-2 leading-relaxed pl-9">
+      <p className="text-[10.5px] text-white/60 line-clamp-2 leading-relaxed pl-8">
         {snippet}
       </p>
 
       {/* Badges de Status & Urgência */}
-      <div className="flex items-center gap-1.5 pl-9 flex-wrap">
+      <div className="flex items-center gap-1.5 pl-8 flex-wrap">
         {urgency === "HIGH" && (
           <Badge
             variant="outline"
-            className="text-[9px] px-1.5 py-0 h-4 border-red-500/40 text-red-300 bg-red-500/15 font-semibold"
+            className="text-[8.5px] px-1.5 py-0 h-3.5 border-red-500/40 text-red-300 bg-red-500/15 font-semibold"
           >
-            <AlertCircle className="w-2.5 h-2.5 mr-1" />
+            <AlertCircle className="w-2.5 h-2.5 mr-0.5" />
             URGENTE
           </Badge>
         )}
@@ -175,7 +175,7 @@ export function NotificationCard({
         {requires_action && (
           <Badge
             variant="outline"
-            className="text-[9px] px-1.5 py-0 h-4 border-amber-500/40 text-amber-300 bg-amber-500/15"
+            className="text-[8.5px] px-1.5 py-0 h-3.5 border-amber-500/40 text-amber-300 bg-amber-500/15"
           >
             Ação Requerida
           </Badge>
@@ -184,9 +184,9 @@ export function NotificationCard({
         {is_approval_pending && (
           <Badge
             variant="outline"
-            className="text-[9px] px-1.5 py-0 h-4 border-blue-500/40 text-blue-300 bg-blue-500/15"
+            className="text-[8.5px] px-1.5 py-0 h-3.5 border-blue-500/40 text-blue-300 bg-blue-500/15"
           >
-            <Clock className="w-2.5 h-2.5 mr-1" />
+            <Clock className="w-2.5 h-2.5 mr-0.5" />
             Pendente
           </Badge>
         )}

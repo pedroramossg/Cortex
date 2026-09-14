@@ -100,25 +100,25 @@ export function NotificationList({
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Top Filter Bar: AppSwitcherPills */}
-      <div className="pb-3 border-b border-white/10">
+      <div className="pb-2 border-b border-white/10">
         <AppSwitcherPills
           selectedApp={selectedApp}
           onSelectApp={setSelectedApp}
           counts={counts}
         />
-        <div className="flex items-center justify-between mt-2 px-1 text-[11px] text-white/50">
+        <div className="flex items-center justify-between mt-1.5 px-0.5 text-[10.5px] text-white/50">
           <span>{filteredMessages.length} mensagens triadas</span>
           {counts.all > 0 && (
             <span className="text-red-400 font-medium">
-              {counts.all} itens requerem atenção imediata
+              {counts.all} requerem atenção
             </span>
           )}
         </div>
       </div>
 
       {/* Lista Rolável com ScrollArea */}
-      <ScrollArea className="flex-1 -mx-2 px-2 mt-2">
-        <div className="flex flex-col gap-2 py-1">
+      <ScrollArea className="flex-1 -mx-1 px-1 mt-1.5">
+        <div className="flex flex-col gap-1.5 py-1">
           {filteredMessages.length > 0 ? (
             filteredMessages.map((message) => (
               <NotificationCard

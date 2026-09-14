@@ -41,7 +41,7 @@ export function AppSwitcherPills({
         onValueChange={(val) => {
           if (val) onSelectApp?.(val);
         }}
-        className="flex items-center gap-1.5 p-1 bg-white/[0.04] border border-white/10 rounded-xl w-fit"
+        className="flex items-center gap-1 p-0.5 bg-white/[0.04] border border-white/10 rounded-xl w-fit"
       >
         {SERVICES.map((service) => {
           const Icon = service.icon;
@@ -54,18 +54,18 @@ export function AppSwitcherPills({
               value={service.id}
               aria-label={service.label}
               className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1 h-7 rounded-lg text-xs font-medium transition-all duration-150 cursor-pointer",
+                "flex items-center gap-1 px-2 py-0.5 h-6 rounded-lg text-[11px] font-medium transition-all duration-150 cursor-pointer",
                 isSelected
                   ? "bg-white/[0.14] text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.15)] border border-white/15"
                   : "text-white/60 hover:text-white hover:bg-white/[0.06] border border-transparent"
               )}
             >
-              <Icon className={cn("w-3.5 h-3.5", isSelected ? "text-blue-400" : "text-white/50")} />
+              <Icon className={cn("w-3 h-3", isSelected ? "text-blue-400" : "text-white/50")} />
               <span>{service.label}</span>
               {count > 0 && (
                 <span
                   className={cn(
-                    "text-[10px] font-mono px-1 py-0.2 rounded-full min-w-4 text-center leading-tight",
+                    "text-[9px] font-mono px-1 py-0.2 rounded-full min-w-3.5 text-center leading-tight",
                     isSelected
                       ? "bg-blue-500/30 text-blue-200 border border-blue-500/40"
                       : "bg-white/10 text-white/50"

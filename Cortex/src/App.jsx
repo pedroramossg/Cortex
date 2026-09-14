@@ -1,90 +1,142 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { invoke } from "@tauri-apps/api/core";
 import { DockRail } from "@/components/dock/DockRail";
 import { NotificationList } from "@/components/inbox/NotificationList";
 
 function App() {
   const [activeTab, setActiveTab] = useState("inbox");
-  const [isFlyoutOpen, setIsFlyoutOpen] = useState(true);
+  const [isFlyoutOpen, setIsFlyoutOpen] = useState(false);
   const [highUrgencyCount, setHighUrgencyCount] = useState(3);
+  const isFlyoutOpenRef = useRef(isFlyoutOpen);
+  isFlyoutOpenRef.current = isFlyoutOpen;
+
+  // Garante que o estado inicial nativo seja colapsado (56px) para não bloquear a tela
+  useEffect(() => {
+    invoke("set_sidebar_expanded", { expanded: false }).catch(() => {});
+  }, []);
+
+  const handleTabChange = useCallback(async (tab) => {
+    setActiveTab(tab);
+    if (!isFlyoutOpen) {
+      // Expansão: redimensiona para 376px imediatamente antes de exibir para dar espaço à animação
+      try {
+        await invoke("set_sidebar_expanded", { expanded: true });
+      } catch (err) {
+        console.error("Falha ao expandir janela da Sidebar:", err);
+      }
+      setIsFlyoutOpen(true);
+    }
+  }, [isFlyoutOpen]);
+
+  const handleToggleFlyout = useCallback(async () => {
+    if (!isFlyoutOpen) {
+      // Expansão: invoca IPC do Tauri antes de renderizar o Flyout para preparar o canvas nativo
+      try {
+        await invoke("set_sidebar_expanded", { expanded: true });
+      } catch (err) {
+        console.error("Falha ao expandir janela da Sidebar:", err);
+      }
+      setIsFlyoutOpen(true);
+    } else {
+      // Colapso: apenas altera o estado React; o onExitComplete do AnimatePresence encolherá a janela
+      setIsFlyoutOpen(false);
+    }
+  }, [isFlyoutOpen]);
+
+  const handleExitComplete = useCallback(async () => {
+    // Redimensiona a janela nativa para 56px apenas após o término completo da animação de saída
+    if (!isFlyoutOpenRef.current) {
+      try {
+        await invoke("set_sidebar_expanded", { expanded: false });
+      } catch (err) {
+        console.error("Falha ao colapsar janela da Sidebar:", err);
+      }
+    }
+  }, []);
 
   return (
     <div className="relative min-h-screen w-full bg-transparent overflow-hidden text-white select-none pointer-events-none">
-      {/* Lateral Dock Flutuante Ancorada no Limite Direito */}
+      {/* Lateral Dock Flutuante Ancorada no Limite Direito (56px) */}
       <DockRail
         activeTab={activeTab}
-        onTabChange={(tab) => {
-          setActiveTab(tab);
-          setIsFlyoutOpen(true);
-        }}
+        onTabChange={handleTabChange}
         highUrgencyCount={highUrgencyCount}
         isOpen={isFlyoutOpen}
-        onToggleFlyout={() => setIsFlyoutOpen((prev) => !prev)}
+        onToggleFlyout={handleToggleFlyout}
       />
 
       {/* Flyout Panel Flutuante (Liquid Glass) Colado Imediatamente à Esquerda da Dock */}
-      {isFlyoutOpen && (
-        <aside
-          aria-label="Cortex Flyout Panel"
-          className="mac-vibrancy fixed right-[58px] top-1/2 -translate-y-1/2 w-[380px] h-[580px] rounded-2xl flex flex-col p-4 shadow-2xl z-40 pointer-events-auto"
-        >
-          {/* Header do Flyout */}
-          <div className="flex items-center justify-between pb-3 border-b border-white/10 shrink-0">
-            <div>
-              <h2 className="text-sm font-semibold text-white tracking-tight">
-                {activeTab === "inbox" && "Inbox & Prioridades"}
-                {activeTab === "calendar" && "Calendário & Reuniões"}
-                {activeTab === "obsidian" && "Notas Obsidian"}
-                {activeTab === "settings" && "Configurações"}
-              </h2>
-              <p className="text-[11px] text-white/50">Cortex Intelligent Workspace</p>
+      <AnimatePresence mode="wait" onExitComplete={handleExitComplete}>
+        {isFlyoutOpen && (
+          <motion.aside
+            key="cortex-flyout"
+            initial={{ opacity: 0, x: 20, scale: 0.98 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 16, scale: 0.98 }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            aria-label="Cortex Flyout Panel"
+            className="mac-vibrancy fixed right-[56px] top-1/2 -translate-y-1/2 w-[320px] h-[580px] rounded-2xl flex flex-col p-3 shadow-2xl z-40 pointer-events-auto"
+          >
+            {/* Header do Flyout */}
+            <div className="flex items-center justify-between pb-2.5 border-b border-white/10 shrink-0">
+              <div>
+                <h2 className="text-[13px] font-semibold text-white tracking-tight">
+                  {activeTab === "inbox" && "Inbox & Prioridades"}
+                  {activeTab === "calendar" && "Calendário & Reuniões"}
+                  {activeTab === "obsidian" && "Notas Obsidian"}
+                  {activeTab === "settings" && "Configurações"}
+                </h2>
+                <p className="text-[11px] text-white/50">Cortex Intelligent Workspace</p>
+              </div>
+              <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                macOS HIG
+              </span>
             </div>
-            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
-              macOS HIG
-            </span>
-          </div>
 
-          {/* Conteúdo Dinâmico por Aba */}
-          <div className="flex-1 overflow-hidden pt-2">
-            {activeTab === "inbox" && <NotificationList />}
+            {/* Conteúdo Dinâmico por Aba */}
+            <div className="flex-1 overflow-hidden pt-2">
+              {activeTab === "inbox" && <NotificationList />}
 
-            {activeTab === "calendar" && (
-              <div className="flex-1 flex flex-col items-center justify-center text-center p-6 gap-2 h-full text-white/60">
-                <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center text-amber-400">
-                  📅
+              {activeTab === "calendar" && (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-4 gap-2 h-full text-white/60">
+                  <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center text-amber-400">
+                    📅
+                  </div>
+                  <h3 className="text-xs font-semibold text-white">Google Calendar Integrado</h3>
+                  <p className="text-[11px] text-white/50">
+                    Sincronização de reuniões, links Meet/Zoom e preparação de briefings ativos.
+                  </p>
                 </div>
-                <h3 className="text-xs font-semibold text-white">Google Calendar Integrado</h3>
-                <p className="text-[11px] text-white/50">
-                  Sincronização de reuniões, links Meet/Zoom e preparação de briefings ativos.
-                </p>
-              </div>
-            )}
+              )}
 
-            {activeTab === "obsidian" && (
-              <div className="flex-1 flex flex-col items-center justify-center text-center p-6 gap-2 h-full text-white/60">
-                <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center text-purple-400">
-                  📝
+              {activeTab === "obsidian" && (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-4 gap-2 h-full text-white/60">
+                  <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center text-purple-400">
+                    📝
+                  </div>
+                  <h3 className="text-xs font-semibold text-white">Obsidian Local Vault</h3>
+                  <p className="text-[11px] text-white/50">
+                    Notas rápidas e briefings salvos diretamente no formato Markdown com frontmatter.
+                  </p>
                 </div>
-                <h3 className="text-xs font-semibold text-white">Obsidian Local Vault</h3>
-                <p className="text-[11px] text-white/50">
-                  Notas rápidas e briefings salvos diretamente no formato Markdown com frontmatter.
-                </p>
-              </div>
-            )}
+              )}
 
-            {activeTab === "settings" && (
-              <div className="flex-1 flex flex-col items-center justify-center text-center p-6 gap-2 h-full text-white/60">
-                <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center text-white/70">
-                  ⚙️
+              {activeTab === "settings" && (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-4 gap-2 h-full text-white/60">
+                  <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center text-white/70">
+                    ⚙️
+                  </div>
+                  <h3 className="text-xs font-semibold text-white">Preferências do Sistema</h3>
+                  <p className="text-[11px] text-white/50">
+                    Ajustes de atalhos globais, modelos de IA e chaves locais protegidas.
+                  </p>
                 </div>
-                <h3 className="text-xs font-semibold text-white">Preferências do Sistema</h3>
-                <p className="text-[11px] text-white/50">
-                  Ajustes de atalhos globais, modelos de IA e chaves locais protegidas.
-                </p>
-              </div>
-            )}
-          </div>
-        </aside>
-      )}
+              )}
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

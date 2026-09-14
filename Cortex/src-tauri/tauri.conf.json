@@ -15,8 +15,8 @@
       {
         "label": "main",
         "title": "cortex",
-        "width": 500,
-        "height": 680,
+        "width": 56,
+        "height": 580,
         "decorations": false,
         "transparent": true,
         "shadow": false,

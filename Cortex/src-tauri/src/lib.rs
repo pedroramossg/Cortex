@@ -110,6 +110,61 @@ fn exit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Dynamically resize and reposition the Sidebar window:
+/// - Expanded (true): width 376px (56px dock + 320px flyout), x = monitor_pos.x + monitor_size.width - 376
+/// - Collapsed (false): width 56px (dock only), x = monitor_pos.x + monitor_size.width - 56
+#[tauri::command]
+fn set_sidebar_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+
+    let scale_factor = window
+        .scale_factor()
+        .map_err(|e| format!("failed to get scale factor: {e}"))?;
+
+    let monitor = window
+        .current_monitor()
+        .map_err(|e| format!("failed to get current monitor: {e}"))?
+        .ok_or_else(|| "no monitor detected for main window".to_string())?;
+
+    let mon_pos = monitor.position().to_logical::<f64>(scale_factor);
+    let mon_size = monitor.size().to_logical::<f64>(scale_factor);
+
+    let target_width = if expanded { 376.0 } else { 56.0 };
+    let target_height = 580.0;
+
+    let (target_x, target_y) = compute_sidebar_position(
+        mon_pos.x,
+        mon_pos.y,
+        mon_size.width,
+        mon_size.height,
+        target_width,
+        target_height,
+    );
+
+    let target_pos = tauri::Position::Logical(tauri::LogicalPosition::new(target_x, target_y));
+    let target_size = tauri::Size::Logical(tauri::LogicalSize::new(target_width, target_height));
+
+    if expanded {
+        window
+            .set_size(target_size)
+            .map_err(|e| format!("failed to set window size: {e}"))?;
+        window
+            .set_position(target_pos)
+            .map_err(|e| format!("failed to set window position: {e}"))?;
+    } else {
+        window
+            .set_position(target_pos)
+            .map_err(|e| format!("failed to set window position: {e}"))?;
+        window
+            .set_size(target_size)
+            .map_err(|e| format!("failed to set window size: {e}"))?;
+    }
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let last_unfocus = Arc::new(Mutex::new(None::<Instant>));
@@ -117,7 +172,13 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, toggle_sidebar, is_sidebar_visible, exit_app])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            toggle_sidebar,
+            is_sidebar_visible,
+            exit_app,
+            set_sidebar_expanded
+        ])
         .setup(move |app| {
             // Position the main Sidebar flush on the right edge on launch
             if let Some(main_win) = app.get_webview_window("main") {
@@ -246,6 +307,22 @@ mod tests {
         let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 500.0, 680.0);
         assert_eq!(x, 1012.0); // 1512 - 500 = 1012 (glued exactly flush to right edge)
         assert_eq!(y, 151.0);  // (982 - 680) / 2 = 151 (vertically centered)
+    }
+
+    #[test]
+    fn test_sidebar_collapsed_dock_positioning() {
+        // Collapsed state: width = 56.0 on 1512x982 display
+        let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 56.0, 580.0);
+        assert_eq!(x, 1456.0); // 1512 - 56 = 1456 (exact right-dock)
+        assert_eq!(y, 201.0);  // (982 - 580) / 2 = 201
+    }
+
+    #[test]
+    fn test_sidebar_expanded_dock_positioning() {
+        // Expanded state: width = 376.0 (56px dock + 320px flyout) on 1512x982 display
+        let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 376.0, 580.0);
+        assert_eq!(x, 1136.0); // 1512 - 376 = 1136
+        assert_eq!(y, 201.0);  // (982 - 580) / 2 = 201
     }
 
     #[test]
