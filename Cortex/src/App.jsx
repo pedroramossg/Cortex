@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { DockRail } from "@/components/dock/DockRail";
 import { NotificationList } from "@/components/inbox/NotificationList";
+import { CalendarTimeline } from "@/components/calendar/CalendarTimeline";
 
 function App() {
   const [activeTab, setActiveTab] = useState("inbox");
@@ -165,17 +166,7 @@ function App() {
             <div className="flex-1 overflow-hidden pt-2">
               {activeTab === "inbox" && <NotificationList />}
 
-              {activeTab === "calendar" && (
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-4 gap-2 h-full text-white/60">
-                  <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center text-amber-400">
-                    📅
-                  </div>
-                  <h3 className="text-xs font-semibold text-white">Google Calendar Integrado</h3>
-                  <p className="text-[11px] text-white/50">
-                    Sincronização de reuniões, links Meet/Zoom e preparação de briefings ativos.
-                  </p>
-                </div>
-              )}
+              {activeTab === "calendar" && <CalendarTimeline />}
 
               {activeTab === "obsidian" && (
                 <div className="flex-1 flex flex-col items-center justify-center text-center p-4 gap-2 h-full text-white/60">
