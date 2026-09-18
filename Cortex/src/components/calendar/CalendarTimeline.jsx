@@ -121,16 +121,25 @@ export function CalendarTimeline({
   initialSelectedEventId = "evt-1",
   onSelectEvent,
 }) {
-  const [eventsList, setEventsList] = useState(events);
   const [currentDate, setCurrentDate] = useState(() => new Date());
+  // Inicialização com cache SWR em memória para renderização com latência zero
+  const [eventsList, setEventsList] = useState(() => calendarApi.getCachedDayEvents(new Date()) || events);
   const [selectedEventId, setSelectedEventId] = useState(initialSelectedEventId);
   const [viewMode, setViewMode] = useState("timeline"); // "timeline" | "month"
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
 
-  // Carrega eventos reais da agenda (Apple Calendar nativo + Google Calendar) com fallback transparente
+  // Carrega eventos reais da agenda (Apple Calendar nativo + Google Calendar) via SWR
   useEffect(() => {
     let isCancelled = false;
+
+    // 1. Aplicação imediata de dados em cache se disponíveis (zero latency)
+    const cached = calendarApi.getCachedDayEvents(currentDate);
+    if (cached && cached.length > 0) {
+      setEventsList(cached);
+    }
+
+    // 2. Revalidação em background não-bloqueante
     calendarApi.loadDayEvents(currentDate, events)
       .then((loaded) => {
         if (!isCancelled && Array.isArray(loaded) && loaded.length > 0) {

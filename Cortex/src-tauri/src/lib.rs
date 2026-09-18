@@ -317,52 +317,65 @@ fn set_sidebar_expanded(
     let mon_pos = monitor.position().to_logical::<f64>(scale_factor);
     let mon_size = monitor.size().to_logical::<f64>(scale_factor);
 
-    let (target_x, target_y, target_width, target_height) = if preset == DockPositionPreset::Custom {
-        let current_pos = window
-            .outer_position()
-            .map_err(|e| format!("failed to get position: {e}"))?
-            .to_logical::<f64>(scale_factor);
-        let current_size = window
-            .outer_size()
-            .map_err(|e| format!("failed to get size: {e}"))?
-            .to_logical::<f64>(scale_factor);
+    let (target_x, target_y, target_width, target_height) = match preset {
+        DockPositionPreset::Right => {
+            let target_w = if expanded { 376.0 } else { 56.0 };
+            let target_h = 580.0;
+            let x = mon_pos.x + mon_size.width - target_w;
+            let y = mon_pos.y + (mon_size.height - target_h) / 2.0;
+            (x, y, target_w, target_h)
+        }
+        DockPositionPreset::Left => {
+            let target_w = if expanded { 376.0 } else { 56.0 };
+            let target_h = 580.0;
+            let x = mon_pos.x;
+            let y = mon_pos.y + (mon_size.height - target_h) / 2.0;
+            (x, y, target_w, target_h)
+        }
+        DockPositionPreset::TopCenter => {
+            let (target_w, target_h) = if expanded { (340.0, 580.0) } else { (260.0, 44.0) };
+            let x = mon_pos.x + (mon_size.width - target_w) / 2.0;
+            let y = mon_pos.y + 40.0;
+            (x, y, target_w, target_h)
+        }
+        DockPositionPreset::Custom => {
+            let current_pos = window
+                .outer_position()
+                .map_err(|e| format!("failed to get position: {e}"))?
+                .to_logical::<f64>(scale_factor);
+            let current_size = window
+                .outer_size()
+                .map_err(|e| format!("failed to get size: {e}"))?
+                .to_logical::<f64>(scale_factor);
 
-        let win_center_x = current_pos.x + (current_size.width / 2.0);
-        let mon_center_x = mon_pos.x + (mon_size.width / 2.0);
+            let win_center_x = current_pos.x + (current_size.width / 2.0);
+            let mon_center_x = mon_pos.x + (mon_size.width / 2.0);
 
-        let target_w = if expanded { 376.0 } else { 56.0 };
-        let target_h = 580.0;
+            let target_w = if expanded { 376.0 } else { 56.0 };
+            let target_h = 580.0;
 
-        let raw_x = if win_center_x < mon_center_x {
-            // Window is on left half: expand to the right
-            current_pos.x
-        } else {
-            // Window is on right half: expand to the left
-            if expanded {
-                current_pos.x - (376.0 - 56.0)
+            let raw_x = if win_center_x < mon_center_x {
+                // Window is on left half: expand to the right
+                current_pos.x
             } else {
-                current_pos.x + (376.0 - 56.0)
-            }
-        };
+                // Window is on right half: expand to the left
+                if expanded {
+                    current_pos.x - (376.0 - 56.0)
+                } else {
+                    current_pos.x + (376.0 - 56.0)
+                }
+            };
 
-        // Clamp x within monitor bounds
-        let max_x = mon_pos.x + mon_size.width - target_w;
-        let clamped_x = raw_x.clamp(mon_pos.x, max_x);
+            // Clamp x within monitor bounds
+            let max_x = mon_pos.x + mon_size.width - target_w;
+            let clamped_x = raw_x.clamp(mon_pos.x, max_x);
 
-        // Clamp y within monitor bounds
-        let max_y = mon_pos.y + mon_size.height - target_h;
-        let clamped_y = current_pos.y.clamp(mon_pos.y, max_y);
+            // Clamp y within monitor bounds
+            let max_y = mon_pos.y + mon_size.height - target_h;
+            let clamped_y = current_pos.y.clamp(mon_pos.y, max_y);
 
-        (clamped_x, clamped_y, target_w, target_h)
-    } else {
-        compute_preset_geometry(
-            preset,
-            expanded,
-            mon_pos.x,
-            mon_pos.y,
-            mon_size.width,
-            mon_size.height,
-        )
+            (clamped_x, clamped_y, target_w, target_h)
+        }
     };
 
     let target_pos = tauri::Position::Logical(tauri::LogicalPosition::new(target_x, target_y));
@@ -492,6 +505,10 @@ fn finish_dragging_puck(
     app: tauri::AppHandle,
     state: State<'_, DockState>,
 ) -> Result<(), String> {
+    let is_puck = *state.is_puck.lock().map_err(|e| e.to_string())?;
+    if !is_puck {
+        return Ok(());
+    }
     execute_snap_and_restore(&app, &state)
 }
 
@@ -581,6 +598,28 @@ fn check_applescript_output(output: &std::process::Output) -> Result<String, Str
     }
 }
 
+/// Executes an osascript with tokio::task::spawn_blocking and a strict 1.5s timeout.
+/// Guarantees the Cocoa / WebKit GUI thread is never blocked.
+async fn run_applescript_async(script: String) -> Result<String, String> {
+    let timeout_duration = std::time::Duration::from_millis(1500);
+    let task = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .output()
+    });
+
+    let res = match tokio::time::timeout(timeout_duration, task).await {
+        Ok(join_res) => match join_res {
+            Ok(cmd_res) => cmd_res.map_err(|e| format!("Falha ao invocar osascript: {e}")),
+            Err(join_err) => Err(format!("Task spawn_blocking falhou: {join_err}")),
+        },
+        Err(_) => Err("Timeout de 1.5s excedido ao comunicar com o Apple Calendar".to_string()),
+    }?;
+
+    check_applescript_output(&res)
+}
+
 /// Helper to parse date components accurately in local timezone
 fn parse_date_components(
     iso_opt: Option<&str>,
@@ -640,9 +679,9 @@ fn parse_date_components(
     (y, m, d, hour, min)
 }
 
-/// Retrieves list of user's Apple Calendars via native EventKit / osascript
+/// Retrieves list of user's Apple Calendars via native EventKit / osascript (non-blocking async)
 #[tauri::command]
-fn get_apple_calendars() -> Result<Vec<AppleCalendar>, String> {
+async fn get_apple_calendars() -> Result<Vec<AppleCalendar>, String> {
     #[cfg(target_os = "macos")]
     {
         let script = r#"
@@ -662,13 +701,7 @@ tell application "Calendar"
     return output
 end tell
 "#;
-        let output = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(script)
-            .output()
-            .map_err(|e| format!("Falha ao invocar osascript: {e}"))?;
-
-        let stdout = check_applescript_output(&output)?;
+        let stdout = run_applescript_async(script.to_string()).await?;
         let mut calendars = Vec::new();
 
         for line in stdout.lines() {
@@ -725,9 +758,9 @@ end tell
     }
 }
 
-/// Creates a new event directly in Apple Calendar
+/// Creates a new event directly in Apple Calendar (non-blocking async)
 #[tauri::command]
-fn create_apple_calendar_event(payload: CreateAppleEventPayload) -> Result<String, String> {
+async fn create_apple_calendar_event(payload: CreateAppleEventPayload) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
         let cal_name = sanitize_applescript_string(&payload.calendar_name);
@@ -781,24 +814,19 @@ end tell
 "#
         );
 
-        let output = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .map_err(|e| format!("Falha ao invocar osascript: {e}"))?;
-
-        let event_id = check_applescript_output(&output)?;
+        let event_id = run_applescript_async(script).await?;
         Ok(event_id)
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = payload;
         Ok(format!("mock-apple-{}", chrono::Utc::now().timestamp_millis()))
     }
 }
 
-/// Deletes an event by its native identifier from Apple Calendar
+/// Deletes an event by its native identifier from Apple Calendar (non-blocking async)
 #[tauri::command]
-fn delete_apple_calendar_event(event_id: String) -> Result<bool, String> {
+async fn delete_apple_calendar_event(event_id: String) -> Result<bool, String> {
     #[cfg(target_os = "macos")]
     {
         let safe_id = sanitize_applescript_string(&event_id);
@@ -819,13 +847,7 @@ end tell
 "#
         );
 
-        let output = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .map_err(|e| format!("Falha ao invocar osascript: {e}"))?;
-
-        let res = check_applescript_output(&output)?;
+        let res = run_applescript_async(script).await?;
         Ok(res == "deleted")
     }
     #[cfg(not(target_os = "macos"))]
@@ -835,9 +857,9 @@ end tell
     }
 }
 
-/// Fetches events from Apple Calendar for a given date (defaults to today)
+/// Fetches events from Apple Calendar for a given date (non-blocking async)
 #[tauri::command]
-fn get_apple_calendar_events(date_iso: Option<String>) -> Result<Vec<AppleCalendarEvent>, String> {
+async fn get_apple_calendar_events(date_iso: Option<String>) -> Result<Vec<AppleCalendarEvent>, String> {
     #[cfg(target_os = "macos")]
     {
         let now = chrono::Local::now();
@@ -903,13 +925,7 @@ end tell
 "#
         );
 
-        let output = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .map_err(|e| format!("Falha ao invocar osascript: {e}"))?;
-
-        let stdout = check_applescript_output(&output)?;
+        let stdout = run_applescript_async(script).await?;
         let mut events = Vec::new();
 
         for line in stdout.lines() {
@@ -1000,6 +1016,7 @@ end tell
         Ok(Vec::new())
     }
 }
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

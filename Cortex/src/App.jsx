@@ -15,6 +15,9 @@ function App() {
   const isFlyoutOpenRef = useRef(isFlyoutOpen);
   isFlyoutOpenRef.current = isFlyoutOpen;
 
+  const isPuckRef = useRef(isPuck);
+  isPuckRef.current = isPuck;
+
   // Garante que o estado inicial nativo seja colapsado (56px) e sincroniza preset
   useEffect(() => {
     invoke("set_sidebar_expanded", { expanded: false }).catch(() => {});
@@ -39,6 +42,7 @@ function App() {
     listen("dock-puck-mode", (event) => {
       const active = Boolean(event.payload);
       setIsPuck(active);
+      isPuckRef.current = active;
       if (active) {
         setIsFlyoutOpen(false);
       }
@@ -46,9 +50,11 @@ function App() {
       unlistenPuck = un;
     });
 
-    // Listener nativo de mouseup para finalizar arrasto com precisão
+    // Listener nativo de mouseup para finalizar arrasto com precisão APENAS em modo puck
     const handleMouseUp = () => {
-      invoke("finish_dragging_puck").catch(() => {});
+      if (isPuckRef.current) {
+        invoke("finish_dragging_puck").catch(() => {});
+      }
     };
     window.addEventListener("mouseup", handleMouseUp);
 

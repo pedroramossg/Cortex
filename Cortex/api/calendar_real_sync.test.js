@@ -36,7 +36,11 @@ const {
     getAppleCalendars, 
     createAppleCalendarEvent, 
     deleteAppleCalendarEvent, 
-    loadDayEvents 
+    loadDayEvents,
+    getCachedDayEvents,
+    setCachedDayEvents,
+    clearCalendarCache,
+    getDateKey
 } = await import('../src/services/calendarApi.js');
 
 describe('Calendar Real Integration & Audit Sync (Frontend <-> Backend API)', () => {
@@ -210,4 +214,60 @@ describe('Calendar Real Integration & Audit Sync (Frontend <-> Backend API)', ()
             expect(first).toHaveProperty('categoryColor');
         });
     });
+
+    describe('SWR In-Memory Cache & Optimistic Mutation Suite', () => {
+        const testDate = '2026-09-18';
+
+        beforeEach(() => {
+            clearCalendarCache();
+        });
+
+        it('should return null when cache is empty and allow manual population', () => {
+            expect(getCachedDayEvents(testDate)).toBeNull();
+
+            const sample = [{ id: 'opt-1', title: 'Cached Meeting', startTime: '10:00' }];
+            setCachedDayEvents(testDate, sample);
+
+            const cached = getCachedDayEvents(testDate);
+            expect(cached).toHaveLength(1);
+            expect(cached[0].title).toBe('Cached Meeting');
+        });
+
+        it('createAppleCalendarEvent should optimistically insert into dayEventsCache immediately', async () => {
+            const eventPayload = {
+                calendarName: 'Trabalho',
+                title: 'Instant Optimistic Standup',
+                startTime: '09:30',
+                endTime: '10:00',
+                date: testDate,
+            };
+
+            const createdId = await createAppleCalendarEvent(eventPayload);
+            const cachedEvents = getCachedDayEvents(testDate);
+
+            expect(Array.isArray(cachedEvents)).toBe(true);
+            expect(cachedEvents.length).toBe(1);
+            expect(cachedEvents[0].title).toBe('Instant Optimistic Standup');
+            expect(cachedEvents[0].calendarName).toBe('Trabalho');
+            expect(cachedEvents[0].id).toBe(createdId);
+        });
+
+        it('deleteAppleCalendarEvent should optimistically evict event from dayEventsCache immediately', async () => {
+            const eventPayload = {
+                calendarName: 'Trabalho',
+                title: 'Event To Delete',
+                startTime: '11:00',
+                endTime: '11:30',
+                date: testDate,
+            };
+
+            const createdId = await createAppleCalendarEvent(eventPayload);
+            expect(getCachedDayEvents(testDate)).toHaveLength(1);
+
+            await deleteAppleCalendarEvent(createdId);
+            const afterDeletion = getCachedDayEvents(testDate);
+            expect(afterDeletion).toHaveLength(0);
+        });
+    });
 });
+

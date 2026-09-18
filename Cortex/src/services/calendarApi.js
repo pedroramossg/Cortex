@@ -33,17 +33,78 @@ async function invokeTauri(command, args = {}) {
 }
 
 // ==========================================
+// In-Memory SWR Cache for Latency-Zero Timeline
+// ==========================================
+let cachedCalendars = null;
+const dayEventsCache = new Map();
+
+/**
+ * Normalizes any Date or ISO string into a YYYY-MM-DD key
+ */
+export function getDateKey(date) {
+  if (!date) {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  if (date instanceof Date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(date).slice(0, 10);
+}
+
+/**
+ * Reads cached events for a specific date (zero latency)
+ */
+export function getCachedDayEvents(date) {
+  return dayEventsCache.get(getDateKey(date)) || null;
+}
+
+/**
+ * Manually populates the cache for a specific date
+ */
+export function setCachedDayEvents(date, events) {
+  dayEventsCache.set(getDateKey(date), Array.isArray(events) ? events : []);
+}
+
+/**
+ * Resets all calendar in-memory caches (useful in tests or on logout)
+ */
+export function clearCalendarCache() {
+  cachedCalendars = null;
+  dayEventsCache.clear();
+}
+
+/**
+ * Helper to remove an event by ID across all in-memory date caches
+ */
+function removeEventFromCache(eventId) {
+  for (const [k, evts] of dayEventsCache.entries()) {
+    if (evts.some((e) => e.id === eventId)) {
+      dayEventsCache.set(k, evts.filter((e) => e.id !== eventId));
+    }
+  }
+}
+
+// ==========================================
 // 1. Apple Calendar Integration (Rust IPC)
 // ==========================================
 
 /**
- * Lists the user's real native Apple Calendars on macOS
+ * Lists the user's real native Apple Calendars on macOS (with SWR caching)
  * @returns {Promise<Array<{ id: string, title: string, colorHex: string, isWritable: boolean }>>}
  */
 export async function getAppleCalendars() {
+  if (cachedCalendars && cachedCalendars.length > 0) {
+    return cachedCalendars;
+  }
+
   try {
     const res = await invokeTauri('get_apple_calendars');
     if (Array.isArray(res) && res.length > 0) {
+      cachedCalendars = res;
       return res;
     }
   } catch (err) {
@@ -51,34 +112,94 @@ export async function getAppleCalendars() {
   }
 
   // Graceful fallback for non-Tauri / test environments
-  return [
+  const fallback = [
     { id: 'Home', title: 'Pessoal', colorHex: '#2C99D3', isWritable: true },
     { id: 'Work', title: 'Trabalho', colorHex: '#E700F9', isWritable: true },
     { id: 'Família', title: 'Família', colorHex: '#007DFF', isWritable: true },
     { id: 'UFSC', title: 'UFSC', colorHex: '#73D343', isWritable: true },
   ];
+  cachedCalendars = fallback;
+  return fallback;
 }
 
 /**
- * Creates an event in Apple Calendar via Rust osascript bridge
+ * Creates an event in Apple Calendar via Rust osascript bridge with optimistic cache update
  * @param {Object} payload
  * @returns {Promise<string>} Event ID
  */
 export async function createAppleCalendarEvent(payload) {
-  const res = await invokeTauri('create_apple_calendar_event', { payload });
-  if (res) return res;
-  return `apple-evt-${Date.now()}`;
+  const dateKey = getDateKey(payload.date);
+  const tempId = `apple-opt-${Date.now()}`;
+
+  // 1. Optimistic SWR Cache Mutation (Immediate Zero-Latency)
+  const optimisticEvent = {
+    id: tempId,
+    title: payload.title || 'Compromisso',
+    startTime: payload.startTime || '09:00',
+    endTime: payload.endTime || '09:45',
+    duration: '45 min',
+    calendarName: payload.calendarName || 'Pessoal',
+    categoryColor: payload.categoryColor || '#3B82F6',
+    description: payload.description || null,
+    meetingLink: payload.meetingUrl || null,
+    platform: payload.location?.toLowerCase().includes('zoom')
+      ? 'zoom'
+      : payload.location?.toLowerCase().includes('meet')
+      ? 'meet'
+      : null,
+    organizer: 'Você',
+    isOrganizer: true,
+    attendees: [
+      {
+        name: 'Você',
+        email: 'me@apple.local',
+        status: 'accepted',
+        isYou: true,
+      },
+    ],
+  };
+
+  const existing = dayEventsCache.get(dateKey) || [];
+  dayEventsCache.set(dateKey, [optimisticEvent, ...existing.filter((e) => e.id !== tempId)]);
+
+  // 2. Asynchronous Native Dispatch (Rust / osascript)
+  try {
+    const res = await invokeTauri('create_apple_calendar_event', { payload });
+    if (res) {
+      // Reconcile optimistic ID with native ID in cache
+      const current = dayEventsCache.get(dateKey) || [];
+      dayEventsCache.set(
+        dateKey,
+        current.map((e) => (e.id === tempId ? { ...e, id: res } : e))
+      );
+      return res;
+    }
+  } catch (err) {
+    console.warn('[calendarApi] createAppleCalendarEvent error:', err);
+    throw err;
+  }
+
+  return tempId;
 }
 
 /**
- * Deletes an event by ID from Apple Calendar
+ * Deletes an event by ID from Apple Calendar with optimistic cache eviction
  * @param {string} eventId
  * @returns {Promise<boolean>}
  */
 export async function deleteAppleCalendarEvent(eventId) {
-  const res = await invokeTauri('delete_apple_calendar_event', { eventId });
-  if (res !== null) return res;
-  return true;
+  // 1. Optimistic Cache Eviction
+  removeEventFromCache(eventId);
+
+  // 2. Asynchronous Native Dispatch
+  try {
+    const res = await invokeTauri('delete_apple_calendar_event', { eventId });
+    if (res !== null) return res;
+    return true;
+  } catch (err) {
+    console.warn('[calendarApi] deleteAppleCalendarEvent error:', err);
+    throw err;
+  }
 }
 
 /**
@@ -87,9 +208,7 @@ export async function deleteAppleCalendarEvent(eventId) {
  * @returns {Promise<Array>}
  */
 export async function getAppleCalendarEvents(date) {
-  const dateIso = date instanceof Date 
-    ? date.toISOString().slice(0, 10) 
-    : String(date || '').slice(0, 10);
+  const dateIso = getDateKey(date);
 
   try {
     const res = await invokeTauri('get_apple_calendar_events', { dateIso });
@@ -147,34 +266,82 @@ export async function listEvents(options = {}, token) {
 }
 
 /**
- * Creates an event on Google Calendar via Node.js API
+ * Creates an event on Google Calendar via Node.js API with optimistic cache update
  */
 export async function createEvent(eventPayload, token) {
-  const response = await fetch(`${API_BASE_URL}/calendar/events`, {
-    method: 'POST',
-    headers: getAuthHeaders(token),
-    body: JSON.stringify(eventPayload),
-  });
-  const json = await response.json();
-  if (!response.ok) {
-    throw new Error(json.message || 'Failed to create event on Google Calendar');
+  const dateKey = getDateKey(eventPayload.start);
+  const tempId = `google-opt-${Date.now()}`;
+
+  // 1. Optimistic SWR Cache Mutation
+  const sDate = eventPayload.start ? new Date(eventPayload.start) : new Date();
+  const eDate = eventPayload.end ? new Date(eventPayload.end) : new Date(Date.now() + 45 * 60000);
+  const optimisticEvent = {
+    id: tempId,
+    title: eventPayload.title || eventPayload.summary || 'Compromisso',
+    startTime: sDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    endTime: eDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    duration: '45 min',
+    categoryColor: '#38BDF8',
+    calendarName: 'Google Calendar',
+    platform: eventPayload.hangoutLink ? 'meet' : null,
+    meetingLink: eventPayload.hangoutLink || null,
+    organizer: 'Você',
+    isOrganizer: true,
+    attendees: (eventPayload.attendees || []).map((a) =>
+      typeof a === 'string' ? { name: a, email: a, status: 'accepted', isYou: false } : a
+    ),
+  };
+
+  const existing = dayEventsCache.get(dateKey) || [];
+  dayEventsCache.set(dateKey, [optimisticEvent, ...existing.filter((e) => e.id !== tempId)]);
+
+  // 2. Asynchronous Remote API Dispatch
+  try {
+    const response = await fetch(`${API_BASE_URL}/calendar/events`, {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+      body: JSON.stringify(eventPayload),
+    });
+    const json = await response.json();
+    if (!response.ok) {
+      throw new Error(json.message || 'Failed to create event on Google Calendar');
+    }
+    if (json.data && json.data.id) {
+      const current = dayEventsCache.get(dateKey) || [];
+      dayEventsCache.set(
+        dateKey,
+        current.map((e) => (e.id === tempId ? { ...e, id: json.data.id } : e))
+      );
+    }
+    return json.data;
+  } catch (err) {
+    console.warn('[calendarApi] createEvent error:', err);
+    throw err;
   }
-  return json.data;
 }
 
 /**
- * Deletes an event on Google Calendar via Node.js API
+ * Deletes an event on Google Calendar via Node.js API with optimistic cache eviction
  */
 export async function deleteEvent(eventId, token) {
-  const response = await fetch(`${API_BASE_URL}/calendar/events/${eventId}`, {
-    method: 'DELETE',
-    headers: getAuthHeaders(token),
-  });
-  const json = await response.json();
-  if (!response.ok) {
-    throw new Error(json.message || 'Failed to delete event on Google Calendar');
+  // 1. Optimistic Cache Eviction
+  removeEventFromCache(eventId);
+
+  // 2. Asynchronous Remote API Dispatch
+  try {
+    const response = await fetch(`${API_BASE_URL}/calendar/events/${eventId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(token),
+    });
+    const json = await response.json();
+    if (!response.ok) {
+      throw new Error(json.message || 'Failed to delete event on Google Calendar');
+    }
+    return json;
+  } catch (err) {
+    console.warn('[calendarApi] deleteEvent error:', err);
+    throw err;
   }
-  return json;
 }
 
 // ==========================================
@@ -184,7 +351,7 @@ export async function deleteEvent(eventId, token) {
 /**
  * Loads events for a given day from Apple Calendar and Google Calendar simultaneously.
  * Normalizes all events to the Cortex frontend contract.
- * Falls back safely to mock data if both are empty/unreachable.
+ * Updates in-memory SWR cache and falls back safely to mock data if empty.
  * 
  * @param {Date} date
  * @param {Array} fallbackMocks
@@ -192,6 +359,7 @@ export async function deleteEvent(eventId, token) {
  * @returns {Promise<Array>}
  */
 export async function loadDayEvents(date = new Date(), fallbackMocks = [], token = null) {
+  const dateKey = getDateKey(date);
   const results = [];
 
   // 1. Fetch Apple Calendar events (macOS native)
@@ -206,8 +374,9 @@ export async function loadDayEvents(date = new Date(), fallbackMocks = [], token
 
   // 2. Fetch Google Calendar events (Node API)
   try {
-    const startOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0).toISOString();
-    const endOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999).toISOString();
+    const targetDate = date instanceof Date ? date : new Date(date);
+    const startOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 0, 0, 0).toISOString();
+    const endOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 23, 59, 59, 999).toISOString();
     
     const googleEvents = await listEvents({ timeMin: startOfDay, timeMax: endOfDay }, token);
     if (Array.isArray(googleEvents) && googleEvents.length > 0) {
@@ -240,8 +409,18 @@ export async function loadDayEvents(date = new Date(), fallbackMocks = [], token
     // API offline or unauthenticated, expected in local preview/tests
   }
 
-  // 3. Fallback to mock data if no real events are available
-  if (results.length === 0 && Array.isArray(fallbackMocks) && fallbackMocks.length > 0) {
+  // 3. Cache fresh results or fallback
+  if (results.length > 0) {
+    dayEventsCache.set(dateKey, results);
+    return results;
+  }
+
+  if (dayEventsCache.has(dateKey) && dayEventsCache.get(dateKey).length > 0) {
+    return dayEventsCache.get(dateKey);
+  }
+
+  // 4. Fallback to mock data if no real events are available
+  if (Array.isArray(fallbackMocks) && fallbackMocks.length > 0) {
     return fallbackMocks;
   }
 
@@ -249,6 +428,10 @@ export async function loadDayEvents(date = new Date(), fallbackMocks = [], token
 }
 
 export default {
+  getDateKey,
+  getCachedDayEvents,
+  setCachedDayEvents,
+  clearCalendarCache,
   getAppleCalendars,
   createAppleCalendarEvent,
   deleteAppleCalendarEvent,
