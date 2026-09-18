@@ -93,4 +93,30 @@ router.get('/today', requireAuth, calendarController.getTodayEvents);
  */
 router.get('/events', requireAuth, calendarController.listEvents);
 
+/**
+ * @swagger
+ * /calendar/events/{id}:
+ *   delete:
+ *     summary: Delete a calendar event
+ *     description: Deletes an event by its ID from Google Calendar.
+ *     tags:
+ *       - Calendar
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Event deleted successfully
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: User or event not found
+ */
+router.delete('/events/:id', requireAuth, calendarController.deleteEvent);
+
 export default router;

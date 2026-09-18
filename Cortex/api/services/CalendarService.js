@@ -129,6 +129,30 @@ class CalendarService {
     }
 
     /**
+     * Delete an event from Google Calendar
+     * @param {Object} user
+     * @param {string} eventId
+     */
+    async deleteEvent(user, eventId) {
+        if (!user.google_access_token && !user.google_refresh_token) {
+            const error = new Error("Google Calendar not connected. Please authenticate with Google first.");
+            error.statusCode = 400;
+            error.isOperational = true;
+            throw error;
+        }
+
+        const auth = this.getOAuth2Client(user);
+        const calendar = google.calendar({ version: 'v3', auth });
+
+        await calendar.events.delete({
+            calendarId: 'primary',
+            eventId
+        });
+
+        return { success: true, message: 'Event deleted successfully' };
+    }
+
+    /**
      * Standard RFC 5545 iCalendar string generator for Apple Calendar compatibility
      */
     generateICalString({ id, title, description, location, start, end, allDay }) {

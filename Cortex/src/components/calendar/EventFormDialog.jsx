@@ -6,16 +6,17 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { getAppleCalendars } from "@/services/calendarApi";
 import { isSafeMeetingUrl } from "@/lib/utils";
 import { cn } from "cn";
-import { Calendar as CalendarIcon, Clock, Link2, Sparkles, Video } from "lucide-react";
-
-const CATEGORIES = [
-  { id: "meeting", label: "Reunião", color: "#10B981" },
-  { id: "focus", label: "Foco", color: "#38BDF8" },
-  { id: "one_on_one", label: "1:1 Sync", color: "#F59E0B" },
-  { id: "strategy", label: "Estratégia", color: "#A855F7" },
-];
+import { Clock, Link2, Sparkles, Calendar as CalendarIcon } from "lucide-react";
 
 /**
  * Calculates human readable duration between two time strings ("HH:MM")
@@ -47,7 +48,7 @@ function detectPlatform(url) {
 
 /**
  * EventFormDialog: Modal de Criação e Edição de Compromissos no Cortex
- * Estilo Liquid Glass, estritamente alinhado ao security.md.
+ * Estilo Liquid Glass, com seleção de calendários reais do sistema (macOS / Apple Calendar).
  * 
  * @param {Object} props
  * @param {boolean} props.isOpen
@@ -67,10 +68,36 @@ export function EventFormDialog({
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("09:45");
   const [meetingLink, setMeetingLink] = useState("");
-  const [category, setCategory] = useState("meeting");
-  const [categoryColor, setCategoryColor] = useState("#10B981");
+  const [availableCalendars, setAvailableCalendars] = useState([
+    { id: "Home", title: "Pessoal", colorHex: "#2C99D3", isWritable: true },
+    { id: "Work", title: "Trabalho", colorHex: "#E700F9", isWritable: true },
+  ]);
+  const [selectedCalendarId, setSelectedCalendarId] = useState("Home");
+  const [categoryColor, setCategoryColor] = useState("#2C99D3");
   const [destination, setDestination] = useState("apple"); // 'apple' | 'google'
   const [urlError, setUrlError] = useState("");
+
+  // Busca os calendários reais do macOS
+  useEffect(() => {
+    let isMounted = true;
+    if (isOpen) {
+      getAppleCalendars().then((cals) => {
+        if (isMounted && Array.isArray(cals) && cals.length > 0) {
+          setAvailableCalendars(cals);
+          if (!initialData) {
+            const defaultCal = cals.find((c) => c.isWritable) || cals[0];
+            setSelectedCalendarId(defaultCal.id);
+            setCategoryColor(defaultCal.colorHex || "#2C99D3");
+          }
+        }
+      }).catch((err) => {
+        console.warn("[EventFormDialog] Erro ao carregar calendários reais:", err);
+      });
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, initialData]);
 
   // Pré-popula campos quando estiver em modo de edição
   useEffect(() => {
@@ -79,22 +106,27 @@ export function EventFormDialog({
       setStartTime(initialData.startTime || "09:00");
       setEndTime(initialData.endTime || "09:45");
       setMeetingLink(initialData.meetingLink || "");
-      setCategory(initialData.category || "meeting");
-      setCategoryColor(initialData.categoryColor || "#10B981");
+      setSelectedCalendarId(initialData.calendarName || initialData.category || "Home");
+      setCategoryColor(initialData.categoryColor || "#2C99D3");
       setDestination(initialData.destination || "apple");
       setUrlError("");
     } else {
-      // Valores padrão para novo evento
       setTitle("");
       setStartTime("09:00");
       setEndTime("09:45");
       setMeetingLink("");
-      setCategory("meeting");
-      setCategoryColor("#10B981");
       setDestination("apple");
       setUrlError("");
     }
   }, [initialData, isOpen]);
+
+  const handleCalendarChange = (calId) => {
+    setSelectedCalendarId(calId);
+    const found = availableCalendars.find((c) => c.id === calId);
+    if (found && found.colorHex) {
+      setCategoryColor(found.colorHex);
+    }
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -113,6 +145,8 @@ export function EventFormDialog({
 
     const duration = calculateDuration(startTime, endTime);
     const platform = detectPlatform(trimmedLink);
+    const chosenCal = availableCalendars.find((c) => c.id === selectedCalendarId);
+    const calendarTitle = chosenCal?.title || selectedCalendarId;
 
     const eventPayload = {
       id: initialData?.id || `evt-${Date.now()}`,
@@ -121,14 +155,14 @@ export function EventFormDialog({
       startTime,
       endTime,
       duration,
-      category,
-      categoryColor,
+      category: selectedCalendarId,
+      categoryColor: chosenCal?.colorHex || categoryColor,
+      calendarName: calendarTitle,
       platform,
       meetingLink: trimmedLink || null,
       destination,
       organizer: initialData?.organizer || "Pedro Ramos (You)",
       isOrganizer: initialData ? initialData.isOrganizer : true,
-      // Preservação rigorosa do contrato de attendees (Google Calendar / EventKit)
       attendees: initialData?.attendees || [
         { name: "Pedro Ramos", email: "pedro@cortex.ai", status: "accepted", isYou: true }
       ]
@@ -148,7 +182,7 @@ export function EventFormDialog({
       >
         <DialogHeader className="text-left pb-1 border-b border-white/10">
           <DialogTitle className="text-sm font-semibold text-white tracking-tight flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: categoryColor }} />
+            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: categoryColor }} />
             <span>{isEditing ? "Editar Compromisso" : "Novo Compromisso"}</span>
           </DialogTitle>
           <DialogDescription className="text-[11px] text-white/50">
@@ -168,12 +202,11 @@ export function EventFormDialog({
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Ex: Alinhamento de Produto"
               required
-              maxLength={120}
               className="w-full bg-white/[0.06] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder:text-white/30 focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/30 outline-none transition-all"
             />
           </div>
 
-          {/* 2. Horários de Início e Fim */}
+          {/* 2. Horários (Início e Fim) */}
           <div className="grid grid-cols-2 gap-2">
             <div className="flex flex-col gap-1">
               <label className="text-[10.5px] font-medium text-white/60 flex items-center gap-1">
@@ -234,40 +267,43 @@ export function EventFormDialog({
             )}
           </div>
 
-          {/* 4. Categoria & Cor */}
+          {/* 4. Agenda Real do Sistema (Shadcn Select) */}
           <div className="flex flex-col gap-1">
-            <label className="text-[10.5px] font-medium text-white/60">
-              Categoria & Cor
+            <label className="text-[10.5px] font-medium text-white/60 flex items-center gap-1">
+              <CalendarIcon className="w-3 h-3 text-white/35" />
+              <span>Agenda do Sistema</span>
             </label>
-            <div className="grid grid-cols-4 gap-1.5">
-              {CATEGORIES.map((cat) => {
-                const isSelected = categoryColor === cat.color;
-                return (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() => {
-                      setCategory(cat.id);
-                      setCategoryColor(cat.color);
-                    }}
-                    className={cn(
-                      "flex flex-col items-center gap-1 p-1.5 rounded-xl border transition-all text-center outline-none",
-                      isSelected
-                        ? "bg-white/[0.12] border-white/30 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.15)] ring-1 ring-white/10"
-                        : "bg-white/[0.03] border-white/10 hover:bg-white/[0.06]"
-                    )}
+            <Select 
+              value={selectedCalendarId} 
+              onValueChange={handleCalendarChange}
+            >
+              <SelectTrigger 
+                className="w-full bg-white/[0.06] border border-white/10 text-xs text-white rounded-xl h-9 px-3 focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/30"
+              >
+                <SelectValue placeholder="Selecione a agenda" />
+              </SelectTrigger>
+              <SelectContent className="bg-[#181824] border-white/15 text-white backdrop-blur-2xl rounded-xl">
+                {availableCalendars.map((cal) => (
+                  <SelectItem 
+                    key={cal.id} 
+                    value={cal.id}
+                    disabled={cal.isWritable === false}
+                    className="focus:bg-white/10 focus:text-white text-xs cursor-pointer py-2 rounded-lg"
                   >
-                    <span
-                      className="w-3 h-3 rounded-full shadow-[0_0_6px_rgba(255,255,255,0.2)]"
-                      style={{ backgroundColor: cat.color }}
-                    />
-                    <span className="text-[9px] font-medium text-white/80 truncate w-full">
-                      {cat.label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+                    <div className="flex items-center gap-2">
+                      <span 
+                        className="w-2.5 h-2.5 rounded-full shrink-0 shadow-[0_0_6px_rgba(255,255,255,0.3)]" 
+                        style={{ backgroundColor: cal.colorHex || "#3B82F6" }} 
+                      />
+                      <span className="font-medium text-white">{cal.title}</span>
+                      {cal.isWritable === false && (
+                        <span className="text-[9px] text-white/40 ml-1">(Leitura)</span>
+                      )}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* 5. Toggle de Destino (Apple vs Google) */}
@@ -280,43 +316,43 @@ export function EventFormDialog({
                 type="button"
                 onClick={() => setDestination("apple")}
                 className={cn(
-                  "py-1.5 px-2 rounded-xl border text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all outline-none",
+                  "py-1.5 px-2 rounded-xl text-xs font-medium border transition-all text-center outline-none",
                   destination === "apple"
-                    ? "bg-blue-600/25 text-blue-300 border-blue-500/40 shadow-[0_0_10px_rgba(59,130,246,0.2)]"
-                    : "bg-white/[0.04] text-white/50 border-white/10 hover:text-white/80"
+                    ? "bg-blue-600/20 border-blue-500/40 text-blue-300 shadow-[0_0_10px_rgba(59,130,246,0.2)]"
+                    : "bg-white/[0.04] border-white/10 text-white/60 hover:text-white"
                 )}
               >
-                <span> Apple Calendar</span>
+                Apple Calendar
               </button>
               <button
                 type="button"
                 onClick={() => setDestination("google")}
                 className={cn(
-                  "py-1.5 px-2 rounded-xl border text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all outline-none",
+                  "py-1.5 px-2 rounded-xl text-xs font-medium border transition-all text-center outline-none",
                   destination === "google"
-                    ? "bg-blue-600/25 text-blue-300 border-blue-500/40 shadow-[0_0_10px_rgba(59,130,246,0.2)]"
-                    : "bg-white/[0.04] text-white/50 border-white/10 hover:text-white/80"
+                    ? "bg-emerald-600/20 border-emerald-500/40 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.2)]"
+                    : "bg-white/[0.04] border-white/10 text-white/60 hover:text-white"
                 )}
               >
-                <span>Google Calendar</span>
+                Google Calendar
               </button>
             </div>
           </div>
 
-          {/* 6. Ações (Cancelar / Salvar) */}
+          {/* 6. Botões de Ação */}
           <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/10 mt-1">
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 rounded-xl text-xs text-white/60 hover:text-white bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 transition-colors outline-none"
+              className="px-3 py-1.5 rounded-xl text-xs text-white/60 hover:text-white hover:bg-white/[0.08] transition-all outline-none"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="px-3.5 py-1.5 rounded-xl text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 shadow-[0_0_12px_rgba(37,99,235,0.4)] border border-blue-400/40 transition-all active:scale-[0.98] outline-none"
+              className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_16px_rgba(37,99,235,0.4)] border border-blue-400/40 active:scale-95 transition-all outline-none"
             >
-              {isEditing ? "Salvar Alterações" : "Criar Evento"}
+              {isEditing ? "Salvar Alterações" : "Criar Compromisso"}
             </button>
           </div>
         </form>

@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use chrono::{Datelike, Timelike};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State};
+
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -493,6 +495,512 @@ fn finish_dragging_puck(
     execute_snap_and_restore(&app, &state)
 }
 
+/// Model representing an Apple Calendar (EventKit)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AppleCalendar {
+    pub id: String,
+    pub title: String,
+    #[serde(rename = "colorHex")]
+    pub color_hex: String,
+    #[serde(rename = "isWritable")]
+    pub is_writable: bool,
+}
+
+/// Payload for creating an event in Apple Calendar
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CreateAppleEventPayload {
+    #[serde(rename = "calendarName")]
+    pub calendar_name: String,
+    pub title: String,
+    pub description: Option<String>,
+    #[serde(rename = "startTime")]
+    pub start_time: String,
+    #[serde(rename = "endTime")]
+    pub end_time: String,
+    pub date: Option<String>,
+    #[serde(rename = "startIso")]
+    pub start_iso: Option<String>,
+    #[serde(rename = "endIso")]
+    pub end_iso: Option<String>,
+    pub location: Option<String>,
+}
+
+/// Model representing a fetched Apple Calendar event
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AppleCalendarEvent {
+    pub id: String,
+    pub title: String,
+    #[serde(rename = "startTime")]
+    pub start_time: String,
+    #[serde(rename = "endTime")]
+    pub end_time: String,
+    pub duration: String,
+    #[serde(rename = "calendarName")]
+    pub calendar_name: String,
+    #[serde(rename = "categoryColor")]
+    pub category_color: String,
+    pub description: Option<String>,
+    #[serde(rename = "meetingLink")]
+    pub meeting_link: Option<String>,
+    pub platform: Option<String>,
+    pub organizer: String,
+    #[serde(rename = "isOrganizer")]
+    pub is_organizer: bool,
+    pub attendees: Vec<AppleAttendee>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AppleAttendee {
+    pub name: String,
+    pub email: String,
+    pub status: String,
+    #[serde(rename = "isYou")]
+    pub is_you: bool,
+}
+
+/// Helper to sanitize input strings against AppleScript injection (security.md)
+pub fn sanitize_applescript_string(input: &str) -> String {
+    input
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\r', "")
+        .replace('\n', " ")
+}
+
+/// Checks AppleScript execution output, handling TCC authorization gracefully (-1743)
+fn check_applescript_output(output: &std::process::Output) -> Result<String, String> {
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("-1743") || stderr.contains("not authorized") || stderr.contains("Not authorized") {
+            Err("Acesso ao Calendário não autorizado no macOS (Permissão TCC negada). Habilite o Cortex em Ajustes do Sistema > Privacidade e Segurança > Automação.".to_string())
+        } else {
+            Err(format!("Falha ao comunicar com Apple Calendar: {}", stderr.trim()))
+        }
+    }
+}
+
+/// Helper to parse date components accurately in local timezone
+fn parse_date_components(
+    iso_opt: Option<&str>,
+    time_str: &str,
+    date_opt: Option<&str>,
+) -> (i32, u32, u32, u32, u32) {
+    if let Some(iso) = iso_opt {
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(iso) {
+            let local_dt = dt.with_timezone(&chrono::Local);
+            return (
+                local_dt.year(),
+                local_dt.month(),
+                local_dt.day(),
+                local_dt.hour(),
+                local_dt.minute(),
+            );
+        }
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S") {
+            return (
+                naive.year(),
+                naive.month(),
+                naive.day(),
+                naive.hour(),
+                naive.minute(),
+            );
+        }
+    }
+
+    let now = chrono::Local::now();
+    let (mut y, mut m, mut d) = (now.year(), now.month(), now.day());
+
+    if let Some(date_s) = date_opt {
+        let parts: Vec<&str> = date_s.split('-').collect();
+        if parts.len() == 3 {
+            if let (Ok(py), Ok(pm), Ok(pd)) = (
+                parts[0].parse::<i32>(),
+                parts[1].parse::<u32>(),
+                parts[2].parse::<u32>(),
+            ) {
+                y = py;
+                m = pm;
+                d = pd;
+            }
+        }
+    }
+
+    let time_parts: Vec<&str> = time_str.split(':').collect();
+    let (hour, min) = if time_parts.len() >= 2 {
+        (
+            time_parts[0].parse::<u32>().unwrap_or(9),
+            time_parts[1].parse::<u32>().unwrap_or(0),
+        )
+    } else {
+        (9, 0)
+    };
+
+    (y, m, d, hour, min)
+}
+
+/// Retrieves list of user's Apple Calendars via native EventKit / osascript
+#[tauri::command]
+fn get_apple_calendars() -> Result<Vec<AppleCalendar>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let script = r#"
+tell application "Calendar"
+    set output to ""
+    repeat with c in calendars
+        try
+            set cName to name of c
+            set cWritable to writable of c
+            set cColor to color of c
+            set r to (item 1 of cColor) / 257 as integer
+            set g to (item 2 of cColor) / 257 as integer
+            set b to (item 3 of cColor) / 257 as integer
+            set output to output & cName & ":::" & r & "," & g & "," & b & ":::" & cWritable & "\n"
+        end try
+    end repeat
+    return output
+end tell
+"#;
+        let output = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .output()
+            .map_err(|e| format!("Falha ao invocar osascript: {e}"))?;
+
+        let stdout = check_applescript_output(&output)?;
+        let mut calendars = Vec::new();
+
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.split(":::").collect();
+            if parts.len() >= 3 {
+                let name = parts[0].trim().to_string();
+                let rgb_parts: Vec<&str> = parts[1].split(',').collect();
+                let color_hex = if rgb_parts.len() == 3 {
+                    let r = rgb_parts[0].trim().parse::<u8>().unwrap_or(59);
+                    let g = rgb_parts[1].trim().parse::<u8>().unwrap_or(130);
+                    let b = rgb_parts[2].trim().parse::<u8>().unwrap_or(246);
+                    format!("#{:02X}{:02X}{:02X}", r, g, b)
+                } else {
+                    "#3B82F6".to_string()
+                };
+                let is_writable = parts[2].trim() == "true";
+
+                calendars.push(AppleCalendar {
+                    id: name.clone(),
+                    title: name,
+                    color_hex,
+                    is_writable,
+                });
+            }
+        }
+
+        if calendars.is_empty() {
+            calendars.push(AppleCalendar {
+                id: "Home".to_string(),
+                title: "Pessoal".to_string(),
+                color_hex: "#38BDF8".to_string(),
+                is_writable: true,
+            });
+        }
+
+        Ok(calendars)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(vec![
+            AppleCalendar {
+                id: "Home".to_string(),
+                title: "Pessoal".to_string(),
+                color_hex: "#38BDF8".to_string(),
+                is_writable: true,
+            },
+            AppleCalendar {
+                id: "Work".to_string(),
+                title: "Trabalho".to_string(),
+                color_hex: "#10B981".to_string(),
+                is_writable: true,
+            },
+        ])
+    }
+}
+
+/// Creates a new event directly in Apple Calendar
+#[tauri::command]
+fn create_apple_calendar_event(payload: CreateAppleEventPayload) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let cal_name = sanitize_applescript_string(&payload.calendar_name);
+        let title = sanitize_applescript_string(&payload.title);
+        let description = payload
+            .description
+            .as_deref()
+            .map(sanitize_applescript_string)
+            .unwrap_or_default();
+        let location = payload
+            .location
+            .as_deref()
+            .map(sanitize_applescript_string)
+            .unwrap_or_default();
+
+        let (sy, sm, sd, sh, smin) = parse_date_components(
+            payload.start_iso.as_deref(),
+            &payload.start_time,
+            payload.date.as_deref(),
+        );
+        let (ey, em, ed, eh, emin) = parse_date_components(
+            payload.end_iso.as_deref(),
+            &payload.end_time,
+            payload.date.as_deref(),
+        );
+
+        let script = format!(
+            r#"
+tell application "Calendar"
+    tell calendar "{cal_name}"
+        set startD to (current date)
+        set year of startD to {sy}
+        set month of startD to {sm}
+        set day of startD to {sd}
+        set hours of startD to {sh}
+        set minutes of startD to {smin}
+        set seconds of startD to 0
+
+        set endD to (current date)
+        set year of endD to {ey}
+        set month of endD to {em}
+        set day of endD to {ed}
+        set hours of endD to {eh}
+        set minutes of endD to {emin}
+        set seconds of endD to 0
+
+        set newEvt to make new event at end of events with properties {{summary:"{title}", start date:startD, end date:endD, description:"{description}", location:"{location}"}}
+        return id of newEvt
+    end tell
+end tell
+"#
+        );
+
+        let output = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .output()
+            .map_err(|e| format!("Falha ao invocar osascript: {e}"))?;
+
+        let event_id = check_applescript_output(&output)?;
+        Ok(event_id)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(format!("mock-apple-{}", chrono::Utc::now().timestamp_millis()))
+    }
+}
+
+/// Deletes an event by its native identifier from Apple Calendar
+#[tauri::command]
+fn delete_apple_calendar_event(event_id: String) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let safe_id = sanitize_applescript_string(&event_id);
+        let script = format!(
+            r#"
+tell application "Calendar"
+    repeat with c in calendars
+        try
+            set evts to (every event of c whose id is "{safe_id}")
+            if (count of evts) > 0 then
+                delete (first item of evts)
+                return "deleted"
+            end if
+        end try
+    end repeat
+    return "not_found"
+end tell
+"#
+        );
+
+        let output = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .output()
+            .map_err(|e| format!("Falha ao invocar osascript: {e}"))?;
+
+        let res = check_applescript_output(&output)?;
+        Ok(res == "deleted")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = event_id;
+        Ok(true)
+    }
+}
+
+/// Fetches events from Apple Calendar for a given date (defaults to today)
+#[tauri::command]
+fn get_apple_calendar_events(date_iso: Option<String>) -> Result<Vec<AppleCalendarEvent>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let now = chrono::Local::now();
+        let (y, m, d) = if let Some(ref date_s) = date_iso {
+            let parts: Vec<&str> = date_s.split('-').collect();
+            if parts.len() == 3 {
+                (
+                    parts[0].parse::<i32>().unwrap_or_else(|_| now.year()),
+                    parts[1].parse::<u32>().unwrap_or_else(|_| now.month()),
+                    parts[2].parse::<u32>().unwrap_or_else(|_| now.day()),
+                )
+            } else {
+                (now.year(), now.month(), now.day())
+            }
+        } else {
+            (now.year(), now.month(), now.day())
+        };
+
+        let script = format!(
+            r#"
+tell application "Calendar"
+    set startD to (current date)
+    set year of startD to {y}
+    set month of startD to {m}
+    set day of startD to {d}
+    set hours of startD to 0
+    set minutes of startD to 0
+    set seconds of startD to 0
+
+    set endD to (current date)
+    set year of endD to {y}
+    set month of endD to {m}
+    set day of endD to {d}
+    set hours of endD to 23
+    set minutes of endD to 59
+    set seconds of endD to 59
+
+    set outList to ""
+    repeat with c in (every calendar whose writable is true)
+        try
+            set cName to name of c
+            set cColor to color of c
+            set r to (item 1 of cColor) / 257 as integer
+            set g to (item 2 of cColor) / 257 as integer
+            set b to (item 3 of cColor) / 257 as integer
+            set hexColor to "" & r & "," & g & "," & b
+            set evts to (every event of c whose (start date >= startD and start date <= endD))
+            repeat with ev in evts
+                set evId to id of ev
+                set evTitle to summary of ev
+                set sH to (hours of (start date of ev))
+                set sM to (minutes of (start date of ev))
+                set eH to (hours of (end date of ev))
+                set eM to (minutes of (end date of ev))
+                set evDesc to description of ev
+                set evUrl to url of ev
+                set outList to outList & evId & ":::" & evTitle & ":::" & sH & ":" & sM & ":::" & eH & ":" & eM & ":::" & cName & ":::" & hexColor & ":::" & evDesc & ":::" & evUrl & "\n"
+            end repeat
+        end try
+    end repeat
+    return outList
+end tell
+"#
+        );
+
+        let output = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .output()
+            .map_err(|e| format!("Falha ao invocar osascript: {e}"))?;
+
+        let stdout = check_applescript_output(&output)?;
+        let mut events = Vec::new();
+
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.split(":::").collect();
+            if parts.len() >= 6 {
+                let id = parts[0].trim().to_string();
+                let title = parts[1].trim().to_string();
+                let s_time = parts[2].trim();
+                let e_time = parts[3].trim();
+                let cal_name = parts[4].trim().to_string();
+                let rgb_parts: Vec<&str> = parts[5].split(',').collect();
+                let category_color = if rgb_parts.len() == 3 {
+                    let r = rgb_parts[0].trim().parse::<u8>().unwrap_or(59);
+                    let g = rgb_parts[1].trim().parse::<u8>().unwrap_or(130);
+                    let b = rgb_parts[2].trim().parse::<u8>().unwrap_or(246);
+                    format!("#{:02X}{:02X}{:02X}", r, g, b)
+                } else {
+                    "#3B82F6".to_string()
+                };
+
+                let desc = if parts.len() >= 7 && !parts[6].trim().is_empty() && parts[6].trim() != "missing value" {
+                    Some(parts[6].trim().to_string())
+                } else {
+                    None
+                };
+
+                let meeting_url = if parts.len() >= 8 && !parts[7].trim().is_empty() && parts[7].trim() != "missing value" {
+                    Some(parts[7].trim().to_string())
+                } else {
+                    None
+                };
+
+                let platform = meeting_url.as_ref().and_then(|u| {
+                    let low = u.to_lowercase();
+                    if low.contains("zoom") {
+                        Some("zoom".to_string())
+                    } else if low.contains("meet.google") {
+                        Some("meet".to_string())
+                    } else if low.contains("teams") {
+                        Some("teams".to_string())
+                    } else {
+                        None
+                    }
+                });
+
+                let format_time = |t_str: &str| -> String {
+                    let bits: Vec<&str> = t_str.split(':').collect();
+                    if bits.len() == 2 {
+                        let h = bits[0].parse::<u32>().unwrap_or(0);
+                        let m = bits[1].parse::<u32>().unwrap_or(0);
+                        format!("{:02}:{:02}", h, m)
+                    } else {
+                        t_str.to_string()
+                    }
+                };
+
+                let start_formatted = format_time(s_time);
+                let end_formatted = format_time(e_time);
+
+                events.push(AppleCalendarEvent {
+                    id,
+                    title,
+                    start_time: start_formatted,
+                    end_time: end_formatted,
+                    duration: "45 min".to_string(),
+                    calendar_name: cal_name,
+                    category_color,
+                    description: desc,
+                    meeting_link: meeting_url,
+                    platform,
+                    organizer: "Você".to_string(),
+                    is_organizer: true,
+                    attendees: vec![AppleAttendee {
+                        name: "Você".to_string(),
+                        email: "me@apple.local".to_string(),
+                        status: "accepted".to_string(),
+                        is_you: true,
+                    }],
+                });
+            }
+        }
+
+        Ok(events)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = date_iso;
+        Ok(Vec::new())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let last_unfocus = Arc::new(Mutex::new(None::<Instant>));
@@ -511,7 +1019,11 @@ pub fn run() {
             set_dock_preset_custom,
             get_dock_preset,
             set_dragging_puck,
-            finish_dragging_puck
+            finish_dragging_puck,
+            get_apple_calendars,
+            create_apple_calendar_event,
+            delete_apple_calendar_event,
+            get_apple_calendar_events
         ])
         .setup(move |app| {
             // Position the main Sidebar flush on the right edge on launch
@@ -770,5 +1282,31 @@ mod tests {
         // Custom: middle of screen
         let p_custom = compute_magnetic_snap_preset(500.0, 400.0, 48.0, 0.0, 0.0, 1512.0);
         assert_eq!(p_custom, DockPositionPreset::Custom);
+    }
+
+    #[test]
+    fn test_sanitize_applescript_injection() {
+        let malicious = r#"Sprint"; do shell script "rm -rf /"; echo ""#;
+        let sanitized = sanitize_applescript_string(malicious);
+        assert_eq!(sanitized, r#"Sprint\"; do shell script \"rm -rf /\"; echo \""#);
+
+        let with_newlines = "Title\nwith\r\nbreaks\\and\\slashes";
+        let clean = sanitize_applescript_string(with_newlines);
+        assert!(!clean.contains('\n'));
+        assert!(!clean.contains('\r'));
+        assert!(clean.contains("\\\\"));
+    }
+
+    #[test]
+    fn test_parse_date_components_iso() {
+        let (y, m, d, _h, _min) = parse_date_components(
+            Some("2026-09-18T14:30:00Z"),
+            "14:30",
+            Some("2026-09-18")
+        );
+        // Validates parsing works without panic
+        assert_eq!(y, 2026);
+        assert_eq!(m, 9);
+        assert!(d >= 17 && d <= 19); // Depending on UTC to local timezone offset
     }
 }

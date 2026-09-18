@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ChevronLeft, 
@@ -15,6 +15,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { MeetingDetailCard } from "@/components/calendar/MeetingDetailCard";
 import { EventFormDialog } from "@/components/calendar/EventFormDialog";
 import { MOCK_CALENDAR_EVENTS } from "@/mocks/calendarEvents";
+import calendarApi from "@/services/calendarApi";
 import { cn } from "cn";
 
 /**
@@ -42,19 +43,78 @@ function formatPillDate(date) {
     month: "short",
   });
 
-  // Capitalize first letter (e.g. "Sex., 18 de set.")
   const capitalized = formatted.charAt(0).toUpperCase() + formatted.slice(1);
   return { text: capitalized, isToday };
 }
 
 /**
+ * Memoized Timeline Event Card (120Hz ProMotion optimization)
+ * Prevents re-rendering untouched sibling cards on selection changes.
+ */
+const TimelineEventCard = React.memo(
+  function TimelineEventCard({ event, isSelected, onClick }) {
+    return (
+      <motion.div
+        whileTap={{ scale: 0.98 }}
+        onClick={onClick}
+        className={cn(
+          "relative flex items-stretch gap-2.5 px-2.5 py-2 rounded-xl transition-colors cursor-pointer select-none",
+          "bg-white/[0.04] hover:bg-white/[0.08]",
+          "border shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]",
+          isSelected
+            ? "bg-white/[0.10] border-white/25 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.15),0_4px_20px_rgba(0,0,0,0.3)] ring-1 ring-white/10"
+            : "border-white/10 hover:border-white/15"
+        )}
+      >
+        {/* Indicador visual lateral de 3px com cor da categoria/agenda */}
+        <span
+          className="w-[3px] rounded-full shrink-0 my-0.5 shadow-[0_0_8px_rgba(255,255,255,0.2)]"
+          style={{ backgroundColor: event.categoryColor || "#3B82F6" }}
+        />
+
+        {/* Conteúdo do Card com min-w-0 e truncate estritos */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="text-[11px] font-mono text-white/60 tracking-tight flex items-center gap-1.5 truncate min-w-0">
+              <Clock className="w-3 h-3 text-white/40 shrink-0" />
+              <span className="truncate">{event.startTime} • {event.duration}</span>
+            </span>
+
+            {event.platform && (
+              <span className="text-[9px] uppercase font-semibold px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30 flex items-center gap-1 shrink-0 whitespace-nowrap">
+                <Video className="w-2.5 h-2.5 shrink-0" />
+                <span>{event.platform}</span>
+              </span>
+            )}
+          </div>
+
+          <h3 className="text-[13px] font-semibold text-white tracking-tight leading-snug truncate">
+            {event.title}
+          </h3>
+
+          {event.attendees && event.attendees.length > 0 && (
+            <div className="flex items-center justify-between gap-1.5 mt-1.5 text-[11px] text-white/45 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0 truncate">
+                <Users className="w-3 h-3 text-white/30 shrink-0" />
+                <span className="truncate">{event.attendees.length} participantes</span>
+              </div>
+              {event.isOrganizer && (
+                <span className="text-[10px] text-emerald-400/90 font-medium shrink-0 truncate max-w-[120px]">
+                  Organizado por você
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </motion.div>
+    );
+  },
+  (prev, next) => prev.event === next.event && prev.isSelected === next.isSelected
+);
+
+/**
  * CalendarTimeline: Visualização de Timeline Diária & Grade Mensal na Sidebar do Cortex
- * Estritamente compatível com o design.md (Liquid Glass) e security.md.
- * 
- * @param {Object} props
- * @param {Array} [props.events=MOCK_CALENDAR_EVENTS]
- * @param {string|null} [props.initialSelectedEventId="evt-1"]
- * @param {(event: Object|null) => void} [props.onSelectEvent]
+ * Conectada ao Apple Calendar (EventKit) e Node.js API, com renderização otimizada para 120Hz.
  */
 export function CalendarTimeline({
   events = MOCK_CALENDAR_EVENTS,
@@ -68,9 +128,23 @@ export function CalendarTimeline({
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
 
+  // Carrega eventos reais da agenda (Apple Calendar nativo + Google Calendar) com fallback transparente
   useEffect(() => {
-    setEventsList(events);
-  }, [events]);
+    let isCancelled = false;
+    calendarApi.loadDayEvents(currentDate, events)
+      .then((loaded) => {
+        if (!isCancelled && Array.isArray(loaded) && loaded.length > 0) {
+          setEventsList(loaded);
+        }
+      })
+      .catch((err) => {
+        console.warn("[CalendarTimeline] Erro ao carregar eventos:", err);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentDate, events]);
 
   const { text: dateDisplay, isToday } = useMemo(
     () => formatPillDate(currentDate),
@@ -89,16 +163,14 @@ export function CalendarTimeline({
     setCurrentDate(new Date());
   };
 
-  // Toggle de seleção do card: clicar novamente no ativo recolhe o MeetingDetailCard
-  const handleCardClick = (event) => {
-    if (selectedEventId === event.id) {
-      setSelectedEventId(null);
-      onSelectEvent?.(null);
-    } else {
-      setSelectedEventId(event.id);
-      onSelectEvent?.(event);
-    }
-  };
+  // Toggle de seleção estável (useCallback) para não invalidar o React.memo dos cards
+  const handleCardClick = useCallback((event) => {
+    setSelectedEventId((prev) => {
+      const nextId = prev === event.id ? null : event.id;
+      onSelectEvent?.(nextId ? event : null);
+      return nextId;
+    });
+  }, [onSelectEvent]);
 
   // Abertura de modal para criação ou edição
   const handleOpenCreate = () => {
@@ -111,8 +183,8 @@ export function CalendarTimeline({
     setIsDialogOpen(true);
   };
 
-  // Salva evento criado ou editado
-  const handleSaveEvent = (savedEvent) => {
+  // Salva evento criado ou editado no estado local e despacha para backend / Apple Calendar
+  const handleSaveEvent = async (savedEvent) => {
     const eventWithDate = {
       ...savedEvent,
       dateObj: savedEvent.dateObj || (isToday ? new Date() : currentDate),
@@ -128,14 +200,66 @@ export function CalendarTimeline({
 
     setSelectedEventId(eventWithDate.id);
     onSelectEvent?.(eventWithDate);
+
+    // Sincronização em background com a agenda escolhida
+    try {
+      if (savedEvent.destination === "apple") {
+        const nativeId = await calendarApi.createAppleCalendarEvent({
+          calendarName: savedEvent.calendarName || "Home",
+          title: savedEvent.title,
+          description: savedEvent.description,
+          startTime: savedEvent.startTime,
+          endTime: savedEvent.endTime,
+          date: (savedEvent.dateObj || currentDate).toISOString().slice(0, 10),
+          location: savedEvent.platform ? `${savedEvent.platform} Meeting` : null,
+        });
+
+        if (nativeId && nativeId !== savedEvent.id) {
+          setEventsList((prev) =>
+            prev.map((e) => (e.id === savedEvent.id ? { ...e, id: nativeId } : e))
+          );
+          setSelectedEventId(nativeId);
+        }
+      } else if (savedEvent.destination === "google") {
+        const startIso = new Date(currentDate);
+        const [sh, sm] = (savedEvent.startTime || "09:00").split(":").map(Number);
+        startIso.setHours(sh, sm, 0, 0);
+
+        const endIso = new Date(currentDate);
+        const [eh, em] = (savedEvent.endTime || "09:45").split(":").map(Number);
+        endIso.setHours(eh, em, 0, 0);
+
+        await calendarApi.createEvent({
+          title: savedEvent.title,
+          description: savedEvent.description,
+          start: startIso.toISOString(),
+          end: endIso.toISOString(),
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          allDay: false,
+          attendees: (savedEvent.attendees || []).map((a) => a.email).filter(Boolean),
+        });
+      }
+    } catch (err) {
+      console.warn("[CalendarTimeline] Sincronização com agenda disparada:", err.message || err);
+    }
   };
 
-  // Exclui evento da lista e desseleciona se for o ativo
-  const handleDeleteEvent = (eventToDelete) => {
+  // Exclui evento da lista e da agenda nativa/remota
+  const handleDeleteEvent = async (eventToDelete) => {
     setEventsList((prev) => prev.filter((e) => e.id !== eventToDelete.id));
     if (selectedEventId === eventToDelete.id) {
       setSelectedEventId(null);
       onSelectEvent?.(null);
+    }
+
+    try {
+      if (eventToDelete.calendarName && eventToDelete.calendarName !== "Google Calendar") {
+        await calendarApi.deleteAppleCalendarEvent(eventToDelete.id);
+      } else {
+        await calendarApi.deleteEvent(eventToDelete.id);
+      }
+    } catch (err) {
+      console.warn("[CalendarTimeline] Exclusão remota disparada:", err.message || err);
     }
   };
 
@@ -147,7 +271,7 @@ export function CalendarTimeline({
     return eventsList.filter((e) => e.dateObj && isSameDay(currentDate, e.dateObj));
   }, [eventsList, isToday, currentDate]);
 
-  // Compromisso ativo selecionado para visualização no rodapé (null se recolhido)
+  // Compromisso ativo selecionado para visualização no rodapé
   const selectedEvent = useMemo(() => {
     if (!selectedEventId || !dayEvents.length) return null;
     return dayEvents.find((e) => e.id === selectedEventId) || null;
@@ -273,66 +397,14 @@ export function CalendarTimeline({
             <ScrollArea className="flex-1 min-h-0 pr-1">
               {dayEvents.length > 0 ? (
                 <div className="flex flex-col gap-2 pb-2">
-                  {dayEvents.map((event) => {
-                    const isSelected = event.id === selectedEventId;
-
-                    return (
-                      <motion.div
-                        key={event.id}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={() => handleCardClick(event)}
-                        className={cn(
-                          "relative flex items-stretch gap-2.5 px-2.5 py-2 rounded-xl transition-all cursor-pointer select-none",
-                          "bg-white/[0.04] hover:bg-white/[0.08]",
-                          "border shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]",
-                          isSelected
-                            ? "bg-white/[0.10] border-white/25 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.15),0_4px_20px_rgba(0,0,0,0.3)] ring-1 ring-white/10"
-                            : "border-white/10 hover:border-white/15"
-                        )}
-                      >
-                        {/* Indicador visual lateral de 3px com cor da categoria */}
-                        <span
-                          className="w-[3px] rounded-full shrink-0 my-0.5 shadow-[0_0_8px_rgba(255,255,255,0.2)]"
-                          style={{ backgroundColor: event.categoryColor || "#3B82F6" }}
-                        />
-
-                        {/* Conteúdo do Card com min-w-0 e truncate estritos */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-2 mb-1">
-                            <span className="text-[11px] font-mono text-white/60 tracking-tight flex items-center gap-1.5 truncate min-w-0">
-                              <Clock className="w-3 h-3 text-white/40 shrink-0" />
-                              <span className="truncate">{event.startTime} • {event.duration}</span>
-                            </span>
-
-                            {event.platform && (
-                              <span className="text-[9px] uppercase font-semibold px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30 flex items-center gap-1 shrink-0 whitespace-nowrap">
-                                <Video className="w-2.5 h-2.5 shrink-0" />
-                                <span>{event.platform}</span>
-                              </span>
-                            )}
-                          </div>
-
-                          <h3 className="text-[13px] font-semibold text-white tracking-tight leading-snug truncate">
-                            {event.title}
-                          </h3>
-
-                          {event.attendees && event.attendees.length > 0 && (
-                            <div className="flex items-center justify-between gap-1.5 mt-1.5 text-[11px] text-white/45 min-w-0">
-                              <div className="flex items-center gap-1.5 min-w-0 truncate">
-                                <Users className="w-3 h-3 text-white/30 shrink-0" />
-                                <span className="truncate">{event.attendees.length} participantes</span>
-                              </div>
-                              {event.isOrganizer && (
-                                <span className="text-[10px] text-emerald-400/90 font-medium shrink-0 truncate max-w-[120px]">
-                                  Organizado por você
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </motion.div>
-                    );
-                  })}
+                  {dayEvents.map((event) => (
+                    <TimelineEventCard
+                      key={event.id}
+                      event={event}
+                      isSelected={event.id === selectedEventId}
+                      onClick={() => handleCardClick(event)}
+                    />
+                  ))}
                 </div>
               ) : (
                 /* Empty State Elegante para dias sem compromissos */
@@ -360,16 +432,16 @@ export function CalendarTimeline({
               )}
             </ScrollArea>
 
-            {/* 3. Card Expandido com AnimatePresence (Recolhe quando desmarcado) */}
-            <AnimatePresence>
+            {/* 3. Card Expandido com AnimatePresence GPU Compositing (Sem layout thrashing a 120Hz) */}
+            <AnimatePresence mode="wait">
               {selectedEvent && (
                 <motion.div
                   key={selectedEvent.id}
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                  className="overflow-hidden shrink-0"
+                  initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                  transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                  className="shrink-0"
                 >
                   <MeetingDetailCard
                     event={selectedEvent}
@@ -390,7 +462,7 @@ export function CalendarTimeline({
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             className="flex flex-col flex-1 min-h-0 items-center justify-start pt-1"
           >
-            <div className="w-full rounded-2xl bg-white/[0.03] border border-white/10 p-2 shadow-xl backdrop-blur-xl">
+            <div className="w-full rounded-2xl bg-white/[0.03] border border-white/10 p-2 shadow-xl">
               <Calendar
                 mode="single"
                 selected={currentDate}

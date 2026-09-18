@@ -55,3 +55,22 @@ export const listEvents = async (req, res, next) => {
         next(error);
     }
 };
+
+export const deleteEvent = async (req, res, next) => {
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        await calendarService.deleteEvent(user, req.params.id);
+
+        return res.status(200).json({
+            success: true,
+            message: 'Calendar event deleted successfully'
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
