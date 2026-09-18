@@ -11,6 +11,7 @@ import {
   RotateCcw
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { MeetingDetailCard } from "@/components/calendar/MeetingDetailCard";
 import { MOCK_CALENDAR_EVENTS } from "@/mocks/calendarEvents";
 import { cn } from "cn";
 
@@ -89,6 +90,12 @@ export function CalendarTimeline({
     }
     return [];
   }, [events, isToday]);
+
+  // Compromisso ativo selecionado para visualização no rodapé
+  const selectedEvent = useMemo(() => {
+    if (!dayEvents.length) return null;
+    return dayEvents.find((e) => e.id === selectedEventId) || dayEvents[0];
+  }, [dayEvents, selectedEventId]);
 
   return (
     <div className="flex flex-col h-full min-h-0 select-none">
@@ -228,6 +235,15 @@ export function CalendarTimeline({
           </div>
         )}
       </ScrollArea>
+
+      {/* 3. Card Expandido de Detalhes da Reunião Selecionada (MeetingDetailCard) */}
+      {selectedEvent && (
+        <MeetingDetailCard
+          event={selectedEvent}
+          onEdit={(evt) => console.log("Editar evento:", evt.id)}
+          onDelete={(evt) => console.log("Excluir evento:", evt.id)}
+        />
+      )}
     </div>
   );
 }

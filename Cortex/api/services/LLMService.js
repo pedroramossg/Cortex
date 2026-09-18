@@ -153,8 +153,8 @@ Return ONLY a valid JSON object matching this schema:
      * Core execution driver supporting Gemini (default) and OpenAI
      */
     async callLLM({ systemPrompt, userPrompt }) {
-        if (process.env.NODE_ENV === 'test' && !process.env.GEMINI_API_KEY && !process.env.OPENAI_API_KEY) {
-            // Return mock JSON in test environment if no real keys
+        if (process.env.NODE_ENV === 'test' && process.env.USE_REAL_AI !== 'true') {
+            // Return mock JSON in test environment if no real keys or in hermetic tests
             return JSON.stringify({
                 options: [
                     { intent: 'confirm', label: 'Confirmar', subject: 'Re: Test', body: 'Confirmado!' },

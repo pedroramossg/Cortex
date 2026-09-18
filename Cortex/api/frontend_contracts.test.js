@@ -1,4 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
+import { MOCK_CALENDAR_EVENTS } from '../src/mocks/calendarEvents.js';
+import { isSafeMeetingUrl } from '../src/lib/utils.js';
 
 /**
  * Test suite for Frontend Contracts and Security Policy (security.md Check 15)
@@ -115,5 +117,58 @@ describe('Frontend Data Contracts & Security Validation (security.md)', () => {
         const puck = { width: 48, height: 48, rounded: 'full' };
         expect(puck.width).toBe(48);
         expect(puck.height).toBe(48);
+    });
+
+    it('should validate Calendar Event data contracts and attendee schema (security.md)', () => {
+        expect(Array.isArray(MOCK_CALENDAR_EVENTS)).toBe(true);
+        expect(MOCK_CALENDAR_EVENTS.length).toBeGreaterThanOrEqual(4);
+
+        const REQUIRED_CALENDAR_FIELDS = [
+            'id', 'title', 'startTime', 'endTime', 'duration',
+            'categoryColor', 'organizer', 'attendees'
+        ];
+
+        const VALID_ATTENDEE_STATUSES = ['accepted', 'tentative', 'needsAction'];
+
+        for (const event of MOCK_CALENDAR_EVENTS) {
+            for (const field of REQUIRED_CALENDAR_FIELDS) {
+                expect(event).toHaveProperty(field);
+            }
+            expect(typeof event.title).toBe('string');
+            expect(event.title.length).toBeGreaterThan(0);
+            expect(event.categoryColor).toMatch(/^#[0-9A-Fa-f]{6}$/);
+
+            // Zero XSS / raw injection check (Check 15)
+            expect(event).not.toHaveProperty('dangerouslySetInnerHTML');
+            expect(event).not.toHaveProperty('innerHTML');
+
+            // Attendees validation
+            expect(Array.isArray(event.attendees)).toBe(true);
+            for (const attendee of event.attendees) {
+                expect(attendee).toHaveProperty('name');
+                expect(attendee).toHaveProperty('status');
+                expect(VALID_ATTENDEE_STATUSES).toContain(attendee.status);
+            }
+        }
+    });
+
+    it('Check 15 (security.md): isSafeMeetingUrl must reject malicious protocols and accept valid HTTPS/zoommtg URLs', () => {
+        // Valid Whitelist URLs
+        expect(isSafeMeetingUrl('https://zoom.us/j/98765432101')).toBe(true);
+        expect(isSafeMeetingUrl('https://meet.google.com/abc-defg-hij')).toBe(true);
+        expect(isSafeMeetingUrl('https://teams.microsoft.com/l/meetup-join/123')).toBe(true);
+        expect(isSafeMeetingUrl('zoommtg://zoom.us/join?action=join&confno=123')).toBe(true);
+
+        // Malicious or forbidden protocols
+        expect(isSafeMeetingUrl("javascript:alert('xss')")).toBe(false);
+        expect(isSafeMeetingUrl("javascript:/*--></title></style></textarea></script><svg/onload=alert(1)>")).toBe(false);
+        expect(isSafeMeetingUrl("data:text/html,<script>alert(1)</script>")).toBe(false);
+        expect(isSafeMeetingUrl("file:///etc/passwd")).toBe(false);
+        expect(isSafeMeetingUrl("vbscript:msgbox(1)")).toBe(false);
+        expect(isSafeMeetingUrl("http://insecure-link.com")).toBe(false); // only https allowed
+        expect(isSafeMeetingUrl("")).toBe(false);
+        expect(isSafeMeetingUrl(null)).toBe(false);
+        expect(isSafeMeetingUrl(undefined)).toBe(false);
+        expect(isSafeMeetingUrl(12345)).toBe(false);
     });
 });
