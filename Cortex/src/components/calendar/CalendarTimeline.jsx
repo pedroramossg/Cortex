@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ChevronLeft, 
@@ -7,11 +7,13 @@ import {
   Video, 
   Users, 
   Calendar as CalendarIcon,
-  RotateCcw
+  RotateCcw,
+  Plus
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Calendar } from "@/components/ui/calendar";
 import { MeetingDetailCard } from "@/components/calendar/MeetingDetailCard";
+import { EventFormDialog } from "@/components/calendar/EventFormDialog";
 import { MOCK_CALENDAR_EVENTS } from "@/mocks/calendarEvents";
 import { cn } from "cn";
 
@@ -59,9 +61,16 @@ export function CalendarTimeline({
   initialSelectedEventId = "evt-1",
   onSelectEvent,
 }) {
+  const [eventsList, setEventsList] = useState(events);
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [selectedEventId, setSelectedEventId] = useState(initialSelectedEventId);
   const [viewMode, setViewMode] = useState("timeline"); // "timeline" | "month"
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState(null);
+
+  useEffect(() => {
+    setEventsList(events);
+  }, [events]);
 
   const { text: dateDisplay, isToday } = useMemo(
     () => formatPillDate(currentDate),
@@ -91,13 +100,52 @@ export function CalendarTimeline({
     }
   };
 
+  // Abertura de modal para criação ou edição
+  const handleOpenCreate = () => {
+    setEditingEvent(null);
+    setIsDialogOpen(true);
+  };
+
+  const handleOpenEdit = (event) => {
+    setEditingEvent(event);
+    setIsDialogOpen(true);
+  };
+
+  // Salva evento criado ou editado
+  const handleSaveEvent = (savedEvent) => {
+    const eventWithDate = {
+      ...savedEvent,
+      dateObj: savedEvent.dateObj || (isToday ? new Date() : currentDate),
+    };
+
+    setEventsList((prev) => {
+      const exists = prev.some((e) => e.id === eventWithDate.id);
+      if (exists) {
+        return prev.map((e) => (e.id === eventWithDate.id ? eventWithDate : e));
+      }
+      return [...prev, eventWithDate];
+    });
+
+    setSelectedEventId(eventWithDate.id);
+    onSelectEvent?.(eventWithDate);
+  };
+
+  // Exclui evento da lista e desseleciona se for o ativo
+  const handleDeleteEvent = (eventToDelete) => {
+    setEventsList((prev) => prev.filter((e) => e.id !== eventToDelete.id));
+    if (selectedEventId === eventToDelete.id) {
+      setSelectedEventId(null);
+      onSelectEvent?.(null);
+    }
+  };
+
   // Filtra eventos para a data selecionada
   const dayEvents = useMemo(() => {
     if (isToday) {
-      return events;
+      return eventsList.filter((e) => !e.dateObj || isSameDay(e.dateObj, new Date()));
     }
-    return [];
-  }, [events, isToday]);
+    return eventsList.filter((e) => e.dateObj && isSameDay(currentDate, e.dateObj));
+  }, [eventsList, isToday, currentDate]);
 
   // Compromisso ativo selecionado para visualização no rodapé (null se recolhido)
   const selectedEvent = useMemo(() => {
@@ -110,9 +158,9 @@ export function CalendarTimeline({
     if (!date) return false;
     const today = new Date();
     if (isSameDay(date, today)) {
-      return events.length > 0;
+      return eventsList.some((e) => !e.dateObj || isSameDay(e.dateObj, today));
     }
-    return events.some((e) => e.dateObj && isSameDay(date, e.dateObj));
+    return eventsList.some((e) => e.dateObj && isSameDay(date, e.dateObj));
   };
 
   return (
@@ -161,9 +209,21 @@ export function CalendarTimeline({
               </span>
             </button>
 
-            {/* Contador de Eventos do Dia */}
-            <div className="text-[11px] font-mono text-white/40 px-1">
-              {dayEvents.length} {dayEvents.length === 1 ? "evento" : "eventos"}
+            {/* Ações da Timeline: Botão Criar (+) e Contador */}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleOpenCreate}
+                data-testid="create-event-button"
+                className="w-7 h-7 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 border border-blue-500/30 flex items-center justify-center transition-all active:scale-95 outline-none shadow-[0_0_10px_rgba(59,130,246,0.2)]"
+                title="Novo compromisso"
+                aria-label="Novo compromisso"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+              <div className="text-[11px] font-mono text-white/40 px-0.5">
+                {dayEvents.length}
+              </div>
             </div>
           </>
         ) : (
@@ -313,8 +373,8 @@ export function CalendarTimeline({
                 >
                   <MeetingDetailCard
                     event={selectedEvent}
-                    onEdit={(evt) => console.log("Editar evento:", evt.id)}
-                    onDelete={(evt) => console.log("Excluir evento:", evt.id)}
+                    onEdit={handleOpenEdit}
+                    onDelete={handleDeleteEvent}
                   />
                 </motion.div>
               )}
@@ -374,6 +434,18 @@ export function CalendarTimeline({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Modal de Criação / Edição de Compromissos */}
+      <EventFormDialog
+        isOpen={isDialogOpen}
+        onClose={() => {
+          setIsDialogOpen(false);
+          setEditingEvent(null);
+        }}
+        onSave={handleSaveEvent}
+        initialData={editingEvent}
+        currentDate={currentDate}
+      />
     </div>
   );
 }

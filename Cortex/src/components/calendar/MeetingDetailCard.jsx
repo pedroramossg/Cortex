@@ -94,6 +94,12 @@ export function MeetingDetailCard({
     return "Entrar na Reunião";
   };
 
+  const [isConfirmingDelete, setIsConfirmingDelete] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsConfirmingDelete(false);
+  }, [event?.id]);
+
   const hasVideoLink = Boolean(event.meetingLink);
 
   return (
@@ -108,7 +114,7 @@ export function MeetingDetailCard({
             {event.title}
           </h4>
 
-          {/* Ações Secundárias Discretas (Editar / Excluir) */}
+          {/* Ações Secundárias Discretas (Editar / Excluir com Confirmação) */}
           <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
@@ -119,15 +125,31 @@ export function MeetingDetailCard({
             >
               <Pencil className="w-3.5 h-3.5" />
             </button>
-            <button
-              type="button"
-              onClick={() => onDelete?.(event)}
-              className="w-7 h-7 rounded-lg bg-white/[0.05] hover:bg-red-500/20 text-white/50 hover:text-red-400 flex items-center justify-center transition-colors border border-white/10 hover:border-red-500/30 outline-none"
-              title="Excluir compromisso"
-              aria-label="Excluir compromisso"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+
+            {isConfirmingDelete ? (
+              <button
+                type="button"
+                onClick={() => {
+                  onDelete?.(event);
+                  setIsConfirmingDelete(false);
+                }}
+                onBlur={() => setIsConfirmingDelete(false)}
+                className="h-7 px-2 rounded-lg bg-red-600/90 hover:bg-red-500 text-white text-[10.5px] font-medium flex items-center gap-1 border border-red-400/50 shadow-[0_0_10px_rgba(239,68,68,0.4)] animate-pulse outline-none"
+                title="Confirmar exclusão deste compromisso"
+              >
+                <span>Excluir?</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsConfirmingDelete(true)}
+                className="w-7 h-7 rounded-lg bg-white/[0.05] hover:bg-red-500/20 text-white/50 hover:text-red-400 flex items-center justify-center transition-colors border border-white/10 hover:border-red-500/30 outline-none"
+                title="Excluir compromisso"
+                aria-label="Excluir compromisso"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
