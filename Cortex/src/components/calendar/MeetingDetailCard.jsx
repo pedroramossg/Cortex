@@ -102,9 +102,9 @@ export function MeetingDetailCard({
       className="mt-2.5 pt-2.5 border-t border-white/10 flex flex-col gap-2.5 shrink-0 select-none"
     >
       {/* 1. Header com Título, Horário e Organizador */}
-      <div className="flex flex-col gap-1">
-        <div className="flex items-start justify-between gap-2">
-          <h4 className="text-[13px] font-semibold text-white tracking-tight leading-snug truncate">
+      <div className="flex flex-col gap-1 min-w-0">
+        <div className="flex items-start justify-between gap-2 min-w-0">
+          <h4 className="text-[13px] font-semibold text-white tracking-tight leading-snug truncate flex-1 min-w-0">
             {event.title}
           </h4>
 
@@ -132,12 +132,12 @@ export function MeetingDetailCard({
         </div>
 
         {/* Metadados: Data/Hora e Organizador */}
-        <div className="flex items-center justify-between text-[11px] text-white/50">
-          <span className="flex items-center gap-1.5">
-            <Clock className="w-3 h-3 text-white/35" />
-            <span>{event.startTime} - {event.endTime} ({event.duration})</span>
+        <div className="flex items-center justify-between text-[11px] text-white/50 min-w-0 gap-1.5">
+          <span className="flex items-center gap-1.5 shrink-0">
+            <Clock className="w-3 h-3 text-white/35 shrink-0" />
+            <span className="truncate">{event.startTime} - {event.endTime} ({event.duration})</span>
           </span>
-          <span className="truncate max-w-[140px] text-right font-medium text-white/60">
+          <span className="truncate max-w-[120px] text-right font-medium text-white/60 shrink-0">
             {event.isOrganizer ? "Organizado por você" : `Por ${event.organizer}`}
           </span>
         </div>
