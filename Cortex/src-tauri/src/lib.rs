@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use chrono::{Datelike, Timelike};
+use chrono::Datelike;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State};
 
@@ -626,31 +626,10 @@ fn parse_date_components(
     time_str: &str,
     date_opt: Option<&str>,
 ) -> (i32, u32, u32, u32, u32) {
-    if let Some(iso) = iso_opt {
-        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(iso) {
-            let local_dt = dt.with_timezone(&chrono::Local);
-            return (
-                local_dt.year(),
-                local_dt.month(),
-                local_dt.day(),
-                local_dt.hour(),
-                local_dt.minute(),
-            );
-        }
-        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S") {
-            return (
-                naive.year(),
-                naive.month(),
-                naive.day(),
-                naive.hour(),
-                naive.minute(),
-            );
-        }
-    }
-
     let now = chrono::Local::now();
     let (mut y, mut m, mut d) = (now.year(), now.month(), now.day());
 
+    // 1. Prioriza date_opt local (YYYY-MM-DD) enviado pelo frontend
     if let Some(date_s) = date_opt {
         let parts: Vec<&str> = date_s.split('-').collect();
         if parts.len() == 3 {
@@ -663,6 +642,18 @@ fn parse_date_components(
                 m = pm;
                 d = pd;
             }
+        }
+    } else if let Some(iso) = iso_opt {
+        // 2. Fallback para ISO apenas se não houver date_opt
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(iso) {
+            let local_dt = dt.with_timezone(&chrono::Local);
+            y = local_dt.year();
+            m = local_dt.month();
+            d = local_dt.day();
+        } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S") {
+            y = naive.year();
+            m = naive.month();
+            d = naive.day();
         }
     }
 
@@ -792,20 +783,22 @@ async fn create_apple_calendar_event(payload: CreateAppleEventPayload) -> Result
 tell application "Calendar"
     tell calendar "{cal_name}"
         set startD to (current date)
-        set year of startD to {sy}
-        set month of startD to {sm}
-        set day of startD to {sd}
+        set day of startD to 1
         set hours of startD to {sh}
         set minutes of startD to {smin}
         set seconds of startD to 0
+        set year of startD to {sy}
+        set month of startD to {sm}
+        set day of startD to {sd}
 
         set endD to (current date)
-        set year of endD to {ey}
-        set month of endD to {em}
-        set day of endD to {ed}
+        set day of endD to 1
         set hours of endD to {eh}
         set minutes of endD to {emin}
         set seconds of endD to 0
+        set year of endD to {ey}
+        set month of endD to {em}
+        set day of endD to {ed}
 
         set newEvt to make new event at end of events with properties {{summary:"{title}", start date:startD, end date:endD, description:"{description}", location:"{location}"}}
         return id of newEvt
@@ -859,46 +852,58 @@ end tell
 
 /// Fetches events from Apple Calendar for a given date (non-blocking async)
 #[tauri::command]
-async fn get_apple_calendar_events(date_iso: Option<String>) -> Result<Vec<AppleCalendarEvent>, String> {
+async fn get_apple_calendar_events(
+    date_iso: Option<String>,
+    year: Option<i32>,
+    month: Option<u32>,
+    day: Option<u32>,
+) -> Result<Vec<AppleCalendarEvent>, String> {
     #[cfg(target_os = "macos")]
     {
         let now = chrono::Local::now();
-        let (y, m, d) = if let Some(ref date_s) = date_iso {
-            let parts: Vec<&str> = date_s.split('-').collect();
-            if parts.len() == 3 {
-                (
-                    parts[0].parse::<i32>().unwrap_or_else(|_| now.year()),
-                    parts[1].parse::<u32>().unwrap_or_else(|_| now.month()),
-                    parts[2].parse::<u32>().unwrap_or_else(|_| now.day()),
-                )
-            } else {
-                (now.year(), now.month(), now.day())
+        let (y, m, d) = match (year, month, day) {
+            (Some(py), Some(pm), Some(pd)) => (py, pm, pd),
+            _ => {
+                if let Some(ref date_s) = date_iso {
+                    let parts: Vec<&str> = date_s.split('-').collect();
+                    if parts.len() == 3 {
+                        (
+                            parts[0].parse::<i32>().unwrap_or_else(|_| now.year()),
+                            parts[1].parse::<u32>().unwrap_or_else(|_| now.month()),
+                            parts[2].parse::<u32>().unwrap_or_else(|_| now.day()),
+                        )
+                    } else {
+                        (now.year(), now.month(), now.day())
+                    }
+                } else {
+                    (now.year(), now.month(), now.day())
+                }
             }
-        } else {
-            (now.year(), now.month(), now.day())
         };
 
         let script = format!(
             r#"
 tell application "Calendar"
-    set startD to (current date)
-    set year of startD to {y}
-    set month of startD to {m}
-    set day of startD to {d}
-    set hours of startD to 0
-    set minutes of startD to 0
-    set seconds of startD to 0
+    set startOfDay to (current date)
+    set day of startOfDay to 1
+    set hours of startOfDay to 0
+    set minutes of startOfDay to 0
+    set seconds of startOfDay to 0
+    set year of startOfDay to {y}
+    set month of startOfDay to {m}
+    set day of startOfDay to {d}
 
-    set endD to (current date)
-    set year of endD to {y}
-    set month of endD to {m}
-    set day of endD to {d}
-    set hours of endD to 23
-    set minutes of endD to 59
-    set seconds of endD to 59
+    set endOfDay to (current date)
+    set day of endOfDay to 1
+    set hours of endOfDay to 23
+    set minutes of endOfDay to 59
+    set seconds of endOfDay to 59
+    set year of endOfDay to {y}
+    set month of endOfDay to {m}
+    set day of endOfDay to {d}
 
     set outList to ""
-    repeat with c in (every calendar whose writable is true)
+    repeat with c in calendars
         try
             set cName to name of c
             set cColor to color of c
@@ -906,7 +911,7 @@ tell application "Calendar"
             set g to (item 2 of cColor) / 257 as integer
             set b to (item 3 of cColor) / 257 as integer
             set hexColor to "" & r & "," & g & "," & b
-            set evts to (every event of c whose (start date >= startD and start date <= endD))
+            set evts to (every event of c whose (start date <= endOfDay and end date >= startOfDay))
             repeat with ev in evts
                 set evId to id of ev
                 set evTitle to summary of ev
@@ -1012,7 +1017,7 @@ end tell
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = date_iso;
+        let _ = (date_iso, year, month, day);
         Ok(Vec::new())
     }
 }
@@ -1316,14 +1321,31 @@ mod tests {
 
     #[test]
     fn test_parse_date_components_iso() {
-        let (y, m, d, _h, _min) = parse_date_components(
-            Some("2026-09-18T14:30:00Z"),
+        let (y, m, d, h, min) = parse_date_components(
+            None,
             "14:30",
             Some("2026-09-18")
         );
-        // Validates parsing works without panic
+        // Validates strict local date parsing
         assert_eq!(y, 2026);
         assert_eq!(m, 9);
-        assert!(d >= 17 && d <= 19); // Depending on UTC to local timezone offset
+        assert_eq!(d, 18);
+        assert_eq!(h, 14);
+        assert_eq!(min, 30);
+    }
+
+    #[test]
+    fn test_parse_date_components_local_date_priority() {
+        // Even if an ISO string with UTC offset is passed, local date takes strict priority
+        let (y, m, d, h, min) = parse_date_components(
+            Some("2026-09-19T01:30:00Z"), // 01:30 UTC next day
+            "22:30",
+            Some("2026-09-18") // 22:30 Brasilia local
+        );
+        assert_eq!(y, 2026);
+        assert_eq!(m, 9);
+        assert_eq!(d, 18); // Must stay on the 18th
+        assert_eq!(h, 22);
+        assert_eq!(min, 30);
     }
 }

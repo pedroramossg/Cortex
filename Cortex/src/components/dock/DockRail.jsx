@@ -197,18 +197,17 @@ export function DockRail({
             const showBadge = item.badgeField === "unread" && highUrgencyCount > 0;
 
             return (
-              <Tooltip key={item.id}>
+              <Tooltip key={item.id} delayDuration={200}>
                 <TooltipTrigger asChild>
-                  <motion.button
+                  <button
                     type="button"
-                    whileTap={{ scale: 0.92 }}
                     onMouseDown={(e) => e.stopPropagation()}
                     onDoubleClick={(e) => e.stopPropagation()}
                     onClick={() => handleItemClick(item.id)}
-                    className={`relative flex items-center justify-center w-8 h-8 rounded-lg transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50 ${
+                    className={`relative flex items-center justify-center w-8 h-8 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50 transition-all duration-150 active:scale-90 ${
                       isActive
                         ? "text-white bg-white/[0.12] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.15)] border border-white/15"
-                        : "text-white/60 hover:text-white hover:bg-white/[0.06] border border-transparent"
+                        : "text-white/60 hover:text-white hover:bg-white/[0.08] border border-transparent"
                     }`}
                     aria-label={item.label}
                     aria-pressed={isActive}
@@ -226,7 +225,7 @@ export function DockRail({
                         {highUrgencyCount > 9 ? "9+" : highUrgencyCount}
                       </span>
                     )}
-                  </motion.button>
+                  </button>
                 </TooltipTrigger>
                 <TooltipContent 
                   side="bottom" 
@@ -318,18 +317,17 @@ export function DockRail({
           const showBadge = item.badgeField === "unread" && highUrgencyCount > 0;
 
           return (
-            <Tooltip key={item.id}>
+            <Tooltip key={item.id} delayDuration={200}>
               <TooltipTrigger asChild>
-                <motion.button
+                <button
                   type="button"
-                  whileTap={{ scale: 0.92 }}
                   onMouseDown={(e) => e.stopPropagation()}
                   onDoubleClick={(e) => e.stopPropagation()}
                   onClick={() => handleItemClick(item.id)}
-                  className={`relative flex items-center justify-center w-10 h-10 rounded-xl transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50 ${
+                  className={`relative flex items-center justify-center w-10 h-10 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-blue-400/50 transition-all duration-150 active:scale-90 ${
                     isActive
                       ? "text-white bg-white/[0.12] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.15)] border border-white/15"
-                      : "text-white/60 hover:text-white hover:bg-white/[0.06] border border-transparent"
+                      : "text-white/60 hover:text-white hover:bg-white/[0.08] border border-transparent"
                   }`}
                   aria-label={item.label}
                   aria-pressed={isActive}
@@ -356,7 +354,7 @@ export function DockRail({
                       {highUrgencyCount > 9 ? "9+" : highUrgencyCount}
                     </span>
                   )}
-                </motion.button>
+                </button>
               </TooltipTrigger>
               <TooltipContent 
                 side={tooltipSide} 

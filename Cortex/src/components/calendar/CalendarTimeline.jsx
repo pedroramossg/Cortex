@@ -194,9 +194,11 @@ export function CalendarTimeline({
 
   // Salva evento criado ou editado no estado local e despacha para backend / Apple Calendar
   const handleSaveEvent = async (savedEvent) => {
+    const localKey = calendarApi.getLocalDateKey(savedEvent.dateObj || currentDate);
     const eventWithDate = {
       ...savedEvent,
-      dateObj: savedEvent.dateObj || (isToday ? new Date() : currentDate),
+      date: localKey,
+      dateObj: savedEvent.dateObj || calendarApi.parseLocalDate(localKey),
     };
 
     setEventsList((prev) => {
@@ -219,7 +221,7 @@ export function CalendarTimeline({
           description: savedEvent.description,
           startTime: savedEvent.startTime,
           endTime: savedEvent.endTime,
-          date: (savedEvent.dateObj || currentDate).toISOString().slice(0, 10),
+          date: localKey,
           location: savedEvent.platform ? `${savedEvent.platform} Meeting` : null,
         });
 
@@ -272,13 +274,20 @@ export function CalendarTimeline({
     }
   };
 
-  // Filtra eventos para a data selecionada
+  const selectedDateKey = calendarApi.getLocalDateKey(currentDate);
+
+  // Filtra eventos para a data selecionada usando precisão de fuso horário local
   const dayEvents = useMemo(() => {
-    if (isToday) {
-      return eventsList.filter((e) => !e.dateObj || isSameDay(e.dateObj, new Date()));
-    }
-    return eventsList.filter((e) => e.dateObj && isSameDay(currentDate, e.dateObj));
-  }, [eventsList, isToday, currentDate]);
+    return eventsList.filter((e) => {
+      if (e.date) {
+        return e.date === selectedDateKey;
+      }
+      if (e.dateObj) {
+        return isSameDay(currentDate, e.dateObj);
+      }
+      return isToday;
+    });
+  }, [eventsList, isToday, currentDate, selectedDateKey]);
 
   // Compromisso ativo selecionado para visualização no rodapé
   const selectedEvent = useMemo(() => {

@@ -40,7 +40,9 @@ const {
     getCachedDayEvents,
     setCachedDayEvents,
     clearCalendarCache,
-    getDateKey
+    getDateKey,
+    getLocalDateKey,
+    parseLocalDate
 } = await import('../src/services/calendarApi.js');
 
 describe('Calendar Real Integration & Audit Sync (Frontend <-> Backend API)', () => {
@@ -269,5 +271,41 @@ describe('Calendar Real Integration & Audit Sync (Frontend <-> Backend API)', ()
             expect(afterDeletion).toHaveLength(0);
         });
     });
+
+    describe('Local Date Precision & Brasilia (UTC-3) Timezone Suite', () => {
+        it('getLocalDateKey should strictly format dates in local timezone without UTC shifting', () => {
+            // Test specific local Date: September 18, 2026 at 23:30 (11:30 PM)
+            const lateNightDate = new Date(2026, 8, 18, 23, 30, 0); // Month 8 is September
+            expect(getLocalDateKey(lateNightDate)).toBe('2026-09-18');
+
+            // Test early morning local Date: September 18, 2026 at 00:15 (12:15 AM)
+            const earlyMorningDate = new Date(2026, 8, 18, 0, 15, 0);
+            expect(getLocalDateKey(earlyMorningDate)).toBe('2026-09-18');
+
+            // Test string preservation
+            expect(getLocalDateKey('2026-09-18')).toBe('2026-09-18');
+            expect(getLocalDateKey('2026-09-19')).toBe('2026-09-19');
+        });
+
+        it('parseLocalDate should safely create Date anchored at midday local time', () => {
+            const parsed = parseLocalDate('2026-09-18');
+            expect(parsed.getFullYear()).toBe(2026);
+            expect(parsed.getMonth()).toBe(8); // September
+            expect(parsed.getDate()).toBe(18);
+            expect(parsed.getHours()).toBe(12);
+        });
+
+        it('loadDayEvents should normalize all events to possess consistent date and dateObj', async () => {
+            const mockEvents = [
+                { id: 'evt-norm-1', title: 'Local Timezone Meeting', startTime: '10:00' }
+            ];
+            const loaded = await loadDayEvents('2026-09-18', mockEvents);
+            expect(loaded).toHaveLength(1);
+            expect(loaded[0].date).toBe('2026-09-18');
+            expect(loaded[0].dateObj).toBeInstanceOf(Date);
+            expect(loaded[0].dateObj.getDate()).toBe(18);
+        });
+    });
 });
+
 

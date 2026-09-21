@@ -39,12 +39,26 @@ let cachedCalendars = null;
 const dayEventsCache = new Map();
 
 /**
- * Normalizes any Date or ISO string into a YYYY-MM-DD key
+ * Formats any Date, string, or timestamp into a strict local YYYY-MM-DD key.
+ * Never uses toISOString() or UTC methods to avoid Brasilia (UTC-3) day jumping.
  */
-export function getDateKey(date) {
+export function getLocalDateKey(date) {
   if (!date) {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  if (typeof date === 'string') {
+    const match = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+      return `${match[1]}-${match[2]}-${match[3]}`;
+    }
+    const parsed = new Date(date);
+    if (!isNaN(parsed.getTime())) {
+      const y = parsed.getFullYear();
+      const m = String(parsed.getMonth() + 1).padStart(2, '0');
+      const d = String(parsed.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
   }
   if (date instanceof Date) {
     const y = date.getFullYear();
@@ -55,18 +69,39 @@ export function getDateKey(date) {
   return String(date).slice(0, 10);
 }
 
+/** Backward compatibility alias */
+export const getDateKey = getLocalDateKey;
+
+/**
+ * Safely creates a local Date anchored at midday (12:00) from a YYYY-MM-DD string.
+ * Completely avoids the ECMAScript UTC midnight trap of new Date("YYYY-MM-DD").
+ */
+export function parseLocalDate(dateKey) {
+  if (dateKey instanceof Date) return dateKey;
+  if (typeof dateKey === 'string') {
+    const match = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+      const y = parseInt(match[1], 10);
+      const m = parseInt(match[2], 10) - 1;
+      const d = parseInt(match[3], 10);
+      return new Date(y, m, d, 12, 0, 0, 0);
+    }
+  }
+  return new Date();
+}
+
 /**
  * Reads cached events for a specific date (zero latency)
  */
 export function getCachedDayEvents(date) {
-  return dayEventsCache.get(getDateKey(date)) || null;
+  return dayEventsCache.get(getLocalDateKey(date)) || null;
 }
 
 /**
  * Manually populates the cache for a specific date
  */
 export function setCachedDayEvents(date, events) {
-  dayEventsCache.set(getDateKey(date), Array.isArray(events) ? events : []);
+  dayEventsCache.set(getLocalDateKey(date), Array.isArray(events) ? events : []);
 }
 
 /**
@@ -203,15 +238,21 @@ export async function deleteAppleCalendarEvent(eventId) {
 }
 
 /**
- * Fetches events scheduled for a specific date from Apple Calendar
+ * Fetches events scheduled for a specific date from Apple Calendar using strict local components
  * @param {Date|string} date
  * @returns {Promise<Array>}
  */
 export async function getAppleCalendarEvents(date) {
-  const dateIso = getDateKey(date);
+  const dateIso = getLocalDateKey(date);
+  const [y, m, d] = dateIso.split('-').map(Number);
 
   try {
-    const res = await invokeTauri('get_apple_calendar_events', { dateIso });
+    const res = await invokeTauri('get_apple_calendar_events', {
+      dateIso,
+      year: y,
+      month: m,
+      day: d,
+    });
     if (Array.isArray(res)) return res;
   } catch (err) {
     console.warn('[calendarApi] getAppleCalendarEvents fallback:', err.message || err);
@@ -269,7 +310,7 @@ export async function listEvents(options = {}, token) {
  * Creates an event on Google Calendar via Node.js API with optimistic cache update
  */
 export async function createEvent(eventPayload, token) {
-  const dateKey = getDateKey(eventPayload.start);
+  const dateKey = getLocalDateKey(eventPayload.start);
   const tempId = `google-opt-${Date.now()}`;
 
   // 1. Optimistic SWR Cache Mutation
@@ -353,13 +394,14 @@ export async function deleteEvent(eventId, token) {
  * Normalizes all events to the Cortex frontend contract.
  * Updates in-memory SWR cache and falls back safely to mock data if empty.
  * 
- * @param {Date} date
+ * @param {Date|string} date
  * @param {Array} fallbackMocks
  * @param {string|null} token
  * @returns {Promise<Array>}
  */
 export async function loadDayEvents(date = new Date(), fallbackMocks = [], token = null) {
-  const dateKey = getDateKey(date);
+  const dateKey = getLocalDateKey(date);
+  const targetDate = parseLocalDate(dateKey);
   const results = [];
 
   // 1. Fetch Apple Calendar events (macOS native)
@@ -374,7 +416,6 @@ export async function loadDayEvents(date = new Date(), fallbackMocks = [], token
 
   // 2. Fetch Google Calendar events (Node API)
   try {
-    const targetDate = date instanceof Date ? date : new Date(date);
     const startOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 0, 0, 0).toISOString();
     const endOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 23, 59, 59, 999).toISOString();
     
@@ -409,10 +450,17 @@ export async function loadDayEvents(date = new Date(), fallbackMocks = [], token
     // API offline or unauthenticated, expected in local preview/tests
   }
 
+  // Normaliza todos os eventos anexando a chave de data e dateObj local
+  const normalizedResults = results.map((e) => ({
+    ...e,
+    date: dateKey,
+    dateObj: e.dateObj || parseLocalDate(dateKey),
+  }));
+
   // 3. Cache fresh results or fallback
-  if (results.length > 0) {
-    dayEventsCache.set(dateKey, results);
-    return results;
+  if (normalizedResults.length > 0) {
+    dayEventsCache.set(dateKey, normalizedResults);
+    return normalizedResults;
   }
 
   if (dayEventsCache.has(dateKey) && dayEventsCache.get(dateKey).length > 0) {
@@ -421,14 +469,21 @@ export async function loadDayEvents(date = new Date(), fallbackMocks = [], token
 
   // 4. Fallback to mock data if no real events are available
   if (Array.isArray(fallbackMocks) && fallbackMocks.length > 0) {
-    return fallbackMocks;
+    const normalizedMocks = fallbackMocks.map((m) => ({
+      ...m,
+      date: dateKey,
+      dateObj: m.dateObj || parseLocalDate(dateKey),
+    }));
+    return normalizedMocks;
   }
 
-  return results;
+  return normalizedResults;
 }
 
 export default {
+  getLocalDateKey,
   getDateKey,
+  parseLocalDate,
   getCachedDayEvents,
   setCachedDayEvents,
   clearCalendarCache,
