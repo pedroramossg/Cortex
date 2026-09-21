@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ChevronLeft, 
@@ -126,6 +126,7 @@ export function CalendarTimeline({
   const [viewMode, setViewMode] = useState("timeline"); // "timeline" | "month"
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
+  const lastFetchedKeyRef = useRef(null);
 
   const selectedDateKey = calendarApi.getLocalDateKey(currentDate);
 
@@ -135,7 +136,7 @@ export function CalendarTimeline({
     onSelectEvent?.(null);
   }, [selectedDateKey, onSelectEvent]);
 
-  // Carrega eventos reais da agenda (Apple Calendar nativo + Google Calendar) via SWR sem mocks
+  // Sincronização Reativa da Visão Mensal com a Timeline (Apple Calendar nativo + Google Calendar)
   useEffect(() => {
     let isCancelled = false;
 
@@ -145,21 +146,27 @@ export function CalendarTimeline({
       setEventsList(cached);
     }
 
-    // 2. Revalidação em background não-bloqueante (dados 100% reais)
+    // 2. Revalidação em background (dados 100% reais)
+    // Se a data já foi buscada com sucesso e está em cache, evita re-fetch disparado puramente por alternância de viewMode
+    if (lastFetchedKeyRef.current === selectedDateKey && cached) {
+      return;
+    }
+
     calendarApi.loadDayEvents(currentDate, [])
       .then((loaded) => {
         if (!isCancelled && Array.isArray(loaded)) {
           setEventsList(loaded);
+          lastFetchedKeyRef.current = selectedDateKey;
         }
       })
       .catch((err) => {
-        console.warn("[CalendarTimeline] Erro ao carregar eventos:", err);
+        console.warn("[CalendarTimeline] Erro ao carregar eventos:", err.message || err);
       });
 
     return () => {
       isCancelled = true;
     };
-  }, [currentDate]);
+  }, [selectedDateKey, viewMode]);
 
   const { text: dateDisplay, isToday } = useMemo(
     () => formatPillDate(currentDate),
@@ -297,11 +304,19 @@ export function CalendarTimeline({
   // Checa se há compromissos em uma data para exibir dots no modo mensal
   const hasEventsOnDate = (date) => {
     if (!date) return false;
+    const dateKey = calendarApi.getLocalDateKey(date);
+    const cached = calendarApi.getCachedDayEvents(date);
+    if (cached && Array.isArray(cached) && cached.length > 0) {
+      return true;
+    }
     const today = new Date();
     if (isSameDay(date, today)) {
       return eventsList.some((e) => !e.dateObj || isSameDay(e.dateObj, today));
     }
-    return eventsList.some((e) => e.dateObj && isSameDay(date, e.dateObj));
+    return eventsList.some((e) => {
+      const eventKey = e.date || (e.dateObj ? calendarApi.getLocalDateKey(e.dateObj) : null);
+      return eventKey === dateKey;
+    });
   };
 
   return (

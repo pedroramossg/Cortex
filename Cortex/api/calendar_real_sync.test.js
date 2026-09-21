@@ -42,7 +42,8 @@ const {
     clearCalendarCache,
     getDateKey,
     getLocalDateKey,
-    parseLocalDate
+    parseLocalDate,
+    formatTimeHHMM
 } = await import('../src/services/calendarApi.js');
 
 describe('Calendar Real Integration & Audit Sync (Frontend <-> Backend API)', () => {
@@ -304,6 +305,79 @@ describe('Calendar Real Integration & Audit Sync (Frontend <-> Backend API)', ()
             expect(loaded[0].date).toBe('2026-09-18');
             expect(loaded[0].dateObj).toBeInstanceOf(Date);
             expect(loaded[0].dateObj.getDate()).toBe(18);
+        });
+    });
+
+    describe('Apple Calendar Robust Time & Category Color Normalization Suite', () => {
+        it('formatTimeHHMM should strictly format times with 2-digit zero-padding', () => {
+            expect(formatTimeHHMM('9:5')).toBe('09:05');
+            expect(formatTimeHHMM('9:00')).toBe('09:00');
+            expect(formatTimeHHMM('09:00')).toBe('09:00');
+            expect(formatTimeHHMM('14:30')).toBe('14:30');
+            expect(formatTimeHHMM('0:0')).toBe('00:00');
+            expect(formatTimeHHMM('')).toBe('09:00');
+            expect(formatTimeHHMM(null)).toBe('09:00');
+        });
+
+        it('loadDayEvents should preserve real categoryColor and normalize HH:MM times from Apple Calendar', async () => {
+            const appleMocks = [
+                {
+                    id: 'apple-real-1',
+                    title: 'Executive Board Sync',
+                    startTime: '9:5',
+                    endTime: '10:0',
+                    duration: '55 min',
+                    calendarName: 'Trabalho',
+                    categoryColor: '#E700F9',
+                    date: '2026-09-18',
+                }
+            ];
+
+            const loaded = await loadDayEvents('2026-09-18', appleMocks);
+            expect(loaded).toHaveLength(1);
+            expect(loaded[0].startTime).toBe('09:05');
+            expect(loaded[0].endTime).toBe('10:00');
+            expect(loaded[0].categoryColor).toBe('#E700F9');
+            expect(loaded[0].calendarName).toBe('Trabalho');
+        });
+
+        it('loadDayEvents should NOT cache empty array [] when Tauri IPC query fails', async () => {
+            clearCalendarCache();
+            const date = '2026-09-25';
+
+            // Simulate Tauri environment where invoke throws an error
+            global.window = {
+                __TAURI_INTERNALS__: {}
+            };
+
+            // In our implementation, invokeTauri will try to import @tauri-apps/api/core,
+            // which fails in node environment and triggers IPC error/catch.
+            // Following standard Promise conventions, loadDayEvents rejects, protecting React state.
+            await expect(loadDayEvents(date)).rejects.toThrow();
+
+            // SWR cache must NOT contain empty array for that date
+            expect(getCachedDayEvents(date)).toBeNull();
+
+            // Cleanup
+            delete global.window;
+        });
+
+        it('loadDayEvents should deduplicate concurrent in-flight requests for the same date', async () => {
+            clearCalendarCache();
+            const date = '2026-09-28';
+            const mockEvents = [
+                { id: 'concurrent-1', title: 'Concurrent Test', startTime: '10:00', endTime: '11:00' }
+            ];
+
+            // Launch two calls simultaneously
+            const p1 = loadDayEvents(date, mockEvents);
+            const p2 = loadDayEvents(date, mockEvents);
+
+            // Both promises should resolve to the exact same reference from inFlightRequests
+            const [r1, r2] = await Promise.all([p1, p2]);
+            expect(r1).toBe(r2);
+            expect(r1).toHaveLength(1);
+            expect(r1[0].title).toBe('Concurrent Test');
         });
     });
 });

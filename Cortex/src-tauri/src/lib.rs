@@ -564,6 +564,8 @@ pub struct AppleCalendarEvent {
     #[serde(rename = "isOrganizer")]
     pub is_organizer: bool,
     pub attendees: Vec<AppleAttendee>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -598,10 +600,10 @@ fn check_applescript_output(output: &std::process::Output) -> Result<String, Str
     }
 }
 
-/// Executes an osascript with tokio::task::spawn_blocking and a strict 1.5s timeout.
+/// Executes an osascript with tokio::task::spawn_blocking and a configurable timeout.
 /// Guarantees the Cocoa / WebKit GUI thread is never blocked.
-async fn run_applescript_async(script: String) -> Result<String, String> {
-    let timeout_duration = std::time::Duration::from_millis(1500);
+async fn run_applescript_async_with_timeout(script: String, timeout_millis: u64) -> Result<String, String> {
+    let timeout_duration = std::time::Duration::from_millis(timeout_millis);
     let task = tokio::task::spawn_blocking(move || {
         std::process::Command::new("osascript")
             .arg("-e")
@@ -614,10 +616,15 @@ async fn run_applescript_async(script: String) -> Result<String, String> {
             Ok(cmd_res) => cmd_res.map_err(|e| format!("Falha ao invocar osascript: {e}")),
             Err(join_err) => Err(format!("Task spawn_blocking falhou: {join_err}")),
         },
-        Err(_) => Err("Timeout de 1.5s excedido ao comunicar com o Apple Calendar".to_string()),
+        Err(_) => Err(format!("Timeout de {}ms excedido ao comunicar com o Apple Calendar", timeout_millis)),
     }?;
 
     check_applescript_output(&res)
+}
+
+/// Executes an osascript with tokio::task::spawn_blocking and a strict 1.5s timeout.
+async fn run_applescript_async(script: String) -> Result<String, String> {
+    run_applescript_async_with_timeout(script, 1500).await
 }
 
 /// Helper to parse date components accurately in local timezone
@@ -781,25 +788,29 @@ async fn create_apple_calendar_event(payload: CreateAppleEventPayload) -> Result
         let script = format!(
             r#"
 tell application "Calendar"
+    set monthNames to {{January, February, March, April, May, June, July, August, September, October, November, December}}
+    set sMonth to item {sm} of monthNames
+    set eMonth to item {em} of monthNames
+
+    set startD to (current date)
+    set time of startD to 0
+    set day of startD to 1
+    set year of startD to {sy}
+    set month of startD to sMonth
+    set day of startD to {sd}
+    set hours of startD to {sh}
+    set minutes of startD to {smin}
+
+    set endD to (current date)
+    set time of endD to 0
+    set day of endD to 1
+    set year of endD to {ey}
+    set month of endD to eMonth
+    set day of endD to {ed}
+    set hours of endD to {eh}
+    set minutes of endD to {emin}
+
     tell calendar "{cal_name}"
-        set startD to (current date)
-        set day of startD to 1
-        set hours of startD to {sh}
-        set minutes of startD to {smin}
-        set seconds of startD to 0
-        set year of startD to {sy}
-        set month of startD to {sm}
-        set day of startD to {sd}
-
-        set endD to (current date)
-        set day of endD to 1
-        set hours of endD to {eh}
-        set minutes of endD to {emin}
-        set seconds of endD to 0
-        set year of endD to {ey}
-        set month of endD to {em}
-        set day of endD to {ed}
-
         set newEvt to make new event at end of events with properties {{summary:"{title}", start date:startD, end date:endD, description:"{description}", location:"{location}"}}
         return id of newEvt
     end tell
@@ -807,7 +818,16 @@ end tell
 "#
         );
 
-        let event_id = run_applescript_async(script).await?;
+        let event_id = match run_applescript_async(script).await {
+            Ok(id) => {
+                println!("[AppleCalendar] Evento criado com ID: {}", id);
+                id
+            }
+            Err(err) => {
+                eprintln!("[AppleCalendar ERROR] Falha ao criar evento: {}", err);
+                return Err(err);
+            }
+        };
         Ok(event_id)
     }
     #[cfg(not(target_os = "macos"))]
@@ -881,48 +901,72 @@ async fn get_apple_calendar_events(
             }
         };
 
+        println!("[AppleCalendar] Buscando eventos para {}/{}/{}", y, m, d);
+
         let script = format!(
             r#"
 tell application "Calendar"
+    set monthNames to {{January, February, March, April, May, June, July, August, September, October, November, December}}
+    set targetMonth to item {m} of monthNames
+
     set startOfDay to (current date)
+    set time of startOfDay to 0
     set day of startOfDay to 1
-    set hours of startOfDay to 0
-    set minutes of startOfDay to 0
-    set seconds of startOfDay to 0
     set year of startOfDay to {y}
-    set month of startOfDay to {m}
+    set month of startOfDay to targetMonth
     set day of startOfDay to {d}
 
-    set endOfDay to (current date)
-    set day of endOfDay to 1
-    set hours of endOfDay to 23
-    set minutes of endOfDay to 59
-    set seconds of endOfDay to 59
-    set year of endOfDay to {y}
-    set month of endOfDay to {m}
-    set day of endOfDay to {d}
+    set endOfDay to startOfDay + (24 * 60 * 60) - 1
 
     set outList to ""
+    set ignoredNames to {{"Birthdays", "Aniversários", "Siri Suggestions", "Sugestões da Siri"}}
     repeat with c in calendars
         try
             set cName to name of c
-            set cColor to color of c
-            set r to (item 1 of cColor) / 257 as integer
-            set g to (item 2 of cColor) / 257 as integer
-            set b to (item 3 of cColor) / 257 as integer
-            set hexColor to "" & r & "," & g & "," & b
-            set evts to (every event of c whose (start date <= endOfDay and end date >= startOfDay))
-            repeat with ev in evts
-                set evId to id of ev
-                set evTitle to summary of ev
-                set sH to (hours of (start date of ev))
-                set sM to (minutes of (start date of ev))
-                set eH to (hours of (end date of ev))
-                set eM to (minutes of (end date of ev))
-                set evDesc to description of ev
-                set evUrl to url of ev
-                set outList to outList & evId & ":::" & evTitle & ":::" & sH & ":" & sM & ":::" & eH & ":" & eM & ":::" & cName & ":::" & hexColor & ":::" & evDesc & ":::" & evUrl & "\n"
-            end repeat
+            if ignoredNames does not contain cName then
+                set hexColor to "59,130,246"
+                try
+                    set cColor to color of c
+                    set r to (item 1 of cColor) / 257 as integer
+                    set g to (item 2 of cColor) / 257 as integer
+                    set b to (item 3 of cColor) / 257 as integer
+                    set hexColor to "" & r & "," & g & "," & b
+                end try
+                tell c
+                    set evts to (every event whose (start date <= endOfDay and end date >= startOfDay))
+                    repeat with ev in evts
+                        try
+                            set evId to id of ev
+                            set evTitle to summary of ev
+                            set sDate to start date of ev
+                            set sH to hours of sDate
+                            set sM to minutes of sDate
+                            set eDate to end date of ev
+                            set eH to hours of eDate
+                            set eM to minutes of eDate
+                            set evDesc to ""
+                            try
+                                set rawDesc to description of ev
+                                if rawDesc is not missing value and rawDesc is not "" then
+                                    set AppleScript's text item delimiters to " "
+                                    set evDesc to (paragraphs of rawDesc) as text
+                                    set AppleScript's text item delimiters to ""
+                                end if
+                            end try
+                            set evUrl to ""
+                            try
+                                set rawUrl to url of ev
+                                if rawUrl is not missing value then
+                                    set evUrl to rawUrl
+                                end if
+                            end try
+                            set outList to outList & evId & ":::" & evTitle & ":::" & sH & ":" & sM & ":::" & eH & ":" & eM & ":::" & cName & ":::" & hexColor & ":::" & evDesc & ":::" & evUrl & "\n"
+                        end try
+                    end repeat
+                end tell
+            end if
+        on error
+            -- Ignora falhas em calendários especiais (ex: Aniversários, Feriados) e continua
         end try
     end repeat
     return outList
@@ -930,11 +974,24 @@ end tell
 "#
         );
 
-        let stdout = run_applescript_async(script).await?;
+        let stdout = match run_applescript_async_with_timeout(script, 8000).await {
+            Ok(out) => {
+                println!("[AppleCalendar] Saída bruta recebida:\n{}", out);
+                out
+            }
+            Err(err) => {
+                eprintln!("[AppleCalendar ERROR] Falha no osascript: {}", err);
+                return Err(err);
+            }
+        };
         let mut events = Vec::new();
 
         for line in stdout.lines() {
-            let parts: Vec<&str> = line.split(":::").collect();
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let parts: Vec<&str> = trimmed.split(":::").collect();
             if parts.len() >= 6 {
                 let id = parts[0].trim().to_string();
                 let title = parts[1].trim().to_string();
@@ -990,12 +1047,43 @@ end tell
                 let start_formatted = format_time(s_time);
                 let end_formatted = format_time(e_time);
 
+                let duration = {
+                    let s_bits: Vec<&str> = start_formatted.split(':').collect();
+                    let e_bits: Vec<&str> = end_formatted.split(':').collect();
+                    if s_bits.len() == 2 && e_bits.len() == 2 {
+                        let sh = s_bits[0].parse::<i32>().unwrap_or(0);
+                        let sm = s_bits[1].parse::<i32>().unwrap_or(0);
+                        let eh = e_bits[0].parse::<i32>().unwrap_or(0);
+                        let em = e_bits[1].parse::<i32>().unwrap_or(0);
+                        let diff = (eh * 60 + em) - (sh * 60 + sm);
+                        if diff > 0 {
+                            if diff >= 60 {
+                                let h = diff / 60;
+                                let m = diff % 60;
+                                if m > 0 {
+                                    format!("{h}h {m}min")
+                                } else {
+                                    format!("{h}h")
+                                }
+                            } else {
+                                format!("{diff} min")
+                            }
+                        } else {
+                            "45 min".to_string()
+                        }
+                    } else {
+                        "45 min".to_string()
+                    }
+                };
+
+                let date_str = format!("{:04}-{:02}-{:02}", y, m, d);
+
                 events.push(AppleCalendarEvent {
                     id,
                     title,
                     start_time: start_formatted,
                     end_time: end_formatted,
-                    duration: "45 min".to_string(),
+                    duration,
                     calendar_name: cal_name,
                     category_color,
                     description: desc,
@@ -1009,6 +1097,7 @@ end tell
                         status: "accepted".to_string(),
                         is_you: true,
                     }],
+                    date: Some(date_str),
                 });
             }
         }

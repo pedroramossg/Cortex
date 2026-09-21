@@ -37,6 +37,7 @@ async function invokeTauri(command, args = {}) {
 // ==========================================
 let cachedCalendars = null;
 const dayEventsCache = new Map();
+const inFlightRequests = new Map();
 
 /**
  * Formats any Date, string, or timestamp into a strict local YYYY-MM-DD key.
@@ -69,8 +70,22 @@ export function getLocalDateKey(date) {
   return String(date).slice(0, 10);
 }
 
-/** Backward compatibility alias */
 export const getDateKey = getLocalDateKey;
+
+/**
+ * Ensures time string is strictly formatted as 2-digit HH:MM (e.g. "09:00", "14:30")
+ */
+export function formatTimeHHMM(timeStr) {
+  if (!timeStr || typeof timeStr !== 'string') return '09:00';
+  const trimmed = timeStr.trim();
+  const parts = trimmed.split(':');
+  if (parts.length >= 2) {
+    const h = String(parseInt(parts[0], 10) || 0).padStart(2, '0');
+    const m = String(parseInt(parts[1], 10) || 0).padStart(2, '0');
+    return `${h}:${m}`;
+  }
+  return trimmed;
+}
 
 /**
  * Safely creates a local Date anchored at midday (12:00) from a YYYY-MM-DD string.
@@ -110,6 +125,7 @@ export function setCachedDayEvents(date, events) {
 export function clearCalendarCache() {
   cachedCalendars = null;
   dayEventsCache.clear();
+  inFlightRequests.clear();
 }
 
 /**
@@ -246,6 +262,10 @@ export async function getAppleCalendarEvents(date) {
   const dateIso = getLocalDateKey(date);
   const [y, m, d] = dateIso.split('-').map(Number);
 
+  if (!isTauriEnvironment()) {
+    return [];
+  }
+
   try {
     const res = await invokeTauri('get_apple_calendar_events', {
       dateIso,
@@ -254,10 +274,11 @@ export async function getAppleCalendarEvents(date) {
       day: d,
     });
     if (Array.isArray(res)) return res;
+    return [];
   } catch (err) {
-    console.warn('[calendarApi] getAppleCalendarEvents fallback:', err.message || err);
+    console.warn('[calendarApi] getAppleCalendarEvents error:', err.message || err);
+    throw err;
   }
-  return [];
 }
 
 // ==========================================
@@ -401,91 +422,131 @@ export async function deleteEvent(eventId, token) {
  */
 export async function loadDayEvents(date = new Date(), fallbackMocks = [], token = null) {
   const dateKey = getLocalDateKey(date);
-  const targetDate = parseLocalDate(dateKey);
-  const results = [];
 
-  // 1. Fetch Apple Calendar events (macOS native)
-  try {
-    const appleEvents = await getAppleCalendarEvents(date);
-    if (Array.isArray(appleEvents) && appleEvents.length > 0) {
-      results.push(...appleEvents);
-    }
-  } catch (err) {
-    console.warn('[calendarApi] Apple Calendar sync bypassed:', err);
+  // 1. Deduplicação In-Flight: Se já existir uma Promise em andamento para essa mesma data,
+  // retorna a Promise existente em vez de disparar uma nova invocação IPC concorrente.
+  if (inFlightRequests.has(dateKey)) {
+    return inFlightRequests.get(dateKey);
   }
 
-  // 2. Fetch Google Calendar events (Node API)
-  try {
-    const startOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 0, 0, 0).toISOString();
-    const endOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 23, 59, 59, 999).toISOString();
-    
-    const googleEvents = await listEvents({ timeMin: startOfDay, timeMax: endOfDay }, token);
-    if (Array.isArray(googleEvents) && googleEvents.length > 0) {
-      // Normalize Google Event to Frontend Contract
-      for (const gev of googleEvents) {
-        const sTime = gev.start?.dateTime ? new Date(gev.start.dateTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '09:00';
-        const eTime = gev.end?.dateTime ? new Date(gev.end.dateTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '09:45';
-        const eventLocalKey = gev.start?.dateTime ? getLocalDateKey(new Date(gev.start.dateTime)) : dateKey;
+  const executionPromise = (async () => {
+    const targetDate = parseLocalDate(dateKey);
+    const results = [];
+    let appleSuccess = false;
+    let appleError = null;
 
-        results.push({
-          id: gev.id,
-          title: gev.summary || 'Compromisso',
-          startTime: sTime,
-          endTime: eTime,
-          duration: '45 min',
-          categoryColor: '#38BDF8',
-          calendarName: 'Google Calendar',
-          platform: gev.hangoutLink ? 'meet' : null,
-          meetingLink: gev.hangoutLink || null,
-          date: eventLocalKey,
-          dateObj: parseLocalDate(eventLocalKey),
-          organizer: gev.organizer?.displayName || gev.organizer?.email || 'Organizador',
-          isOrganizer: Boolean(gev.organizer?.self),
-          attendees: (gev.attendees || []).map(a => ({
-            name: a.displayName || a.email,
-            email: a.email,
-            status: a.responseStatus === 'accepted' ? 'accepted' : 'tentative',
-            isYou: Boolean(a.self)
-          }))
-        });
+    // 1. Fetch Apple Calendar events (macOS native)
+    try {
+      const appleEvents = await getAppleCalendarEvents(date);
+      appleSuccess = true;
+      if (Array.isArray(appleEvents) && appleEvents.length > 0) {
+        for (const ev of appleEvents) {
+          results.push({
+            ...ev,
+            startTime: formatTimeHHMM(ev.startTime),
+            endTime: formatTimeHHMM(ev.endTime),
+            categoryColor: ev.categoryColor && ev.categoryColor.startsWith('#') ? ev.categoryColor : '#3B82F6',
+            date: ev.date || dateKey,
+            dateObj: ev.dateObj || parseLocalDate(ev.date || dateKey),
+          });
+        }
       }
+    } catch (err) {
+      console.warn('[calendarApi] Apple Calendar sync bypassed:', err);
+      appleSuccess = false;
+      appleError = err;
     }
-  } catch {
-    // API offline or unauthenticated, expected in local preview/tests
-  }
 
-  // Normaliza todos os eventos anexando estritamente a chave local e dateObj
-  const normalizedResults = results.map((e) => {
-    const resolvedKey = e.date ? getLocalDateKey(e.date) : dateKey;
-    return {
-      ...e,
-      date: resolvedKey,
-      dateObj: e.dateObj || parseLocalDate(resolvedKey),
-    };
-  });
+    // 2. Fetch Google Calendar events (Node API)
+    try {
+      const startOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 0, 0, 0).toISOString();
+      const endOfDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 23, 59, 59, 999).toISOString();
+      
+      const googleEvents = await listEvents({ timeMin: startOfDay, timeMax: endOfDay }, token);
+      if (Array.isArray(googleEvents) && googleEvents.length > 0) {
+        // Normalize Google Event to Frontend Contract
+        for (const gev of googleEvents) {
+          const sTime = gev.start?.dateTime ? new Date(gev.start.dateTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '09:00';
+          const eTime = gev.end?.dateTime ? new Date(gev.end.dateTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '09:45';
+          const eventLocalKey = gev.start?.dateTime ? getLocalDateKey(new Date(gev.start.dateTime)) : dateKey;
 
-  // 3. Cache fresh results or fallback
-  if (normalizedResults.length > 0) {
-    dayEventsCache.set(dateKey, normalizedResults);
-    return normalizedResults;
-  }
+          results.push({
+            id: gev.id,
+            title: gev.summary || 'Compromisso',
+            startTime: formatTimeHHMM(sTime),
+            endTime: formatTimeHHMM(eTime),
+            duration: '45 min',
+            categoryColor: '#38BDF8',
+            calendarName: 'Google Calendar',
+            platform: gev.hangoutLink ? 'meet' : null,
+            meetingLink: gev.hangoutLink || null,
+            date: eventLocalKey,
+            dateObj: parseLocalDate(eventLocalKey),
+            organizer: gev.organizer?.displayName || gev.organizer?.email || 'Organizador',
+            isOrganizer: Boolean(gev.organizer?.self),
+            attendees: (gev.attendees || []).map(a => ({
+              name: a.displayName || a.email,
+              email: a.email,
+              status: a.responseStatus === 'accepted' ? 'accepted' : 'tentative',
+              isYou: Boolean(a.self)
+            }))
+          });
+        }
+      }
+    } catch {
+      // API offline or unauthenticated, expected in local preview/tests
+    }
 
-  // 4. Fallback isolado exclusivamente se mocks forem passados por parâmetro (ex: testes Jest)
-  if (Array.isArray(fallbackMocks) && fallbackMocks.length > 0) {
-    const normalizedMocks = fallbackMocks.map((m) => {
-      const resolvedMockKey = m.date ? getLocalDateKey(m.date) : dateKey;
+    // Normaliza todos os eventos anexando estritamente a chave local e dateObj
+    const normalizedResults = results.map((e) => {
+      const resolvedKey = e.date ? getLocalDateKey(e.date) : dateKey;
       return {
-        ...m,
-        date: resolvedMockKey,
-        dateObj: m.dateObj || parseLocalDate(resolvedMockKey),
+        ...e,
+        date: resolvedKey,
+        dateObj: e.dateObj || parseLocalDate(resolvedKey),
       };
     });
-    return normalizedMocks;
-  }
 
-  // 5. Dia livre (100% real sem dados mockados invasivos)
-  dayEventsCache.set(dateKey, []);
-  return [];
+    // 3. Cache fresh results or fallback
+    if (normalizedResults.length > 0) {
+      dayEventsCache.set(dateKey, normalizedResults);
+      return normalizedResults;
+    }
+
+    // 4. Fallback isolado exclusivamente se mocks forem passados por parâmetro (ex: testes Jest)
+    if (Array.isArray(fallbackMocks) && fallbackMocks.length > 0) {
+      const normalizedMocks = fallbackMocks.map((m) => {
+        const resolvedMockKey = m.date ? getLocalDateKey(m.date) : dateKey;
+        return {
+          ...m,
+          startTime: formatTimeHHMM(m.startTime),
+          endTime: formatTimeHHMM(m.endTime),
+          categoryColor: m.categoryColor || '#3B82F6',
+          date: resolvedMockKey,
+          dateObj: m.dateObj || parseLocalDate(resolvedMockKey),
+        };
+      });
+      return normalizedMocks;
+    }
+
+    // Se estiver em ambiente Tauri e a consulta nativa falhou, REJEITA lançando o erro.
+    // Convenção canônica: no CalendarTimeline o .catch() preserva o estado sem sobrescrever com [].
+    if (isTauriEnvironment() && !appleSuccess) {
+      throw appleError || new Error('Falha ao comunicar com o Apple Calendar');
+    }
+
+    // 5. Dia livre (100% real com sucesso comprovado)
+    dayEventsCache.set(dateKey, []);
+    return [];
+  })();
+
+  inFlightRequests.set(dateKey, executionPromise);
+
+  try {
+    return await executionPromise;
+  } finally {
+    inFlightRequests.delete(dateKey);
+  }
 }
 
 export default {
@@ -504,4 +565,5 @@ export default {
   createEvent,
   deleteEvent,
   loadDayEvents,
+  formatTimeHHMM,
 };
