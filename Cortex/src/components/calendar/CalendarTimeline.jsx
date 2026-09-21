@@ -481,7 +481,7 @@ export function CalendarTimeline({
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             className="flex flex-col flex-1 min-h-0 items-center justify-start pt-1"
           >
-            <div className="w-full rounded-2xl bg-white/[0.03] border border-white/10 p-2 shadow-xl">
+            <div className="relative w-full rounded-2xl bg-white/[0.03] border border-white/10 p-2 shadow-xl">
               <Calendar
                 mode="single"
                 selected={currentDate}
@@ -499,12 +499,16 @@ export function CalendarTimeline({
                 }}
                 className="w-full p-0 select-none bg-transparent"
                 classNames={{
-                  months: "w-full",
-                  month: "w-full space-y-2",
-                  month_caption: "flex justify-center pt-0.5 relative items-center h-7 text-xs font-semibold text-white",
-                  nav: "flex items-center justify-between absolute inset-x-0 top-0 w-full px-0.5",
-                  button_previous: "h-6 w-6 bg-white/[0.06] hover:bg-white/[0.12] text-white/70 hover:text-white rounded-md p-0 flex items-center justify-center border border-white/10 transition-colors",
-                  button_next: "h-6 w-6 bg-white/[0.06] hover:bg-white/[0.12] text-white/70 hover:text-white rounded-md p-0 flex items-center justify-center border border-white/10 transition-colors",
+                  months: "relative w-full",
+                  month: "relative w-full space-y-2",
+                  caption: "relative flex items-center justify-center pt-1 pb-2",
+                  month_caption: "relative flex items-center justify-center pt-1 pb-2 h-7 text-xs font-semibold text-white",
+                  caption_label: "text-xs font-semibold text-white select-none",
+                  nav: "flex items-center space-x-1",
+                  button_previous: "absolute left-2 top-2 h-7 w-7 bg-white/[0.06] hover:bg-white/[0.12] text-white/70 hover:text-white rounded-md p-0 flex items-center justify-center border border-white/10 transition-colors z-10",
+                  button_next: "absolute right-2 top-2 h-7 w-7 bg-white/[0.06] hover:bg-white/[0.12] text-white/70 hover:text-white rounded-md p-0 flex items-center justify-center border border-white/10 transition-colors z-10",
+                  nav_button_previous: "absolute left-2 top-2 h-7 w-7 bg-white/[0.06] hover:bg-white/[0.12] rounded-md flex items-center justify-center text-white/70 hover:text-white border border-white/10 transition-colors z-10",
+                  nav_button_next: "absolute right-2 top-2 h-7 w-7 bg-white/[0.06] hover:bg-white/[0.12] rounded-md flex items-center justify-center text-white/70 hover:text-white border border-white/10 transition-colors z-10",
                   month_grid: "w-full border-collapse mt-1",
                   weekdays: "flex justify-between w-full mb-1 px-1",
                   weekday: "text-white/40 rounded-md w-8 font-mono text-[9.5px] text-center uppercase tracking-wider",

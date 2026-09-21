@@ -42,23 +42,35 @@ function Calendar({
           "relative flex flex-col gap-4 md:flex-row",
           defaultClassNames.months
         ),
-        month: cn("flex w-full flex-col gap-4", defaultClassNames.month),
+        month: cn("relative flex w-full flex-col gap-4", defaultClassNames.month),
+        caption: cn(
+          "relative flex items-center justify-center pt-1 pb-2",
+          defaultClassNames.caption
+        ),
         nav: cn(
-          "absolute inset-x-0 top-0 flex w-full items-center justify-between gap-1",
+          "flex items-center space-x-1",
           defaultClassNames.nav
         ),
         button_previous: cn(
           buttonVariants({ variant: buttonVariant }),
-          "size-(--cell-size) p-0 select-none aria-disabled:opacity-50",
+          "absolute left-2 top-2 h-7 w-7 bg-white/[0.06] hover:bg-white/[0.12] rounded-md flex items-center justify-center text-white/70 select-none aria-disabled:opacity-50",
           defaultClassNames.button_previous
         ),
         button_next: cn(
           buttonVariants({ variant: buttonVariant }),
-          "size-(--cell-size) p-0 select-none aria-disabled:opacity-50",
+          "absolute right-2 top-2 h-7 w-7 bg-white/[0.06] hover:bg-white/[0.12] rounded-md flex items-center justify-center text-white/70 select-none aria-disabled:opacity-50",
           defaultClassNames.button_next
         ),
+        nav_button_previous: cn(
+          "absolute left-2 top-2 h-7 w-7 bg-white/[0.06] hover:bg-white/[0.12] rounded-md flex items-center justify-center text-white/70",
+          defaultClassNames.nav_button_previous
+        ),
+        nav_button_next: cn(
+          "absolute right-2 top-2 h-7 w-7 bg-white/[0.06] hover:bg-white/[0.12] rounded-md flex items-center justify-center text-white/70",
+          defaultClassNames.nav_button_next
+        ),
         month_caption: cn(
-          "flex h-(--cell-size) w-full items-center justify-center px-(--cell-size)",
+          "relative flex h-(--cell-size) w-full items-center justify-center px-(--cell-size) pt-1 pb-2",
           defaultClassNames.month_caption
         ),
         dropdowns: cn(
