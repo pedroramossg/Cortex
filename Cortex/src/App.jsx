@@ -163,9 +163,6 @@ function App() {
                 </h2>
                 <p className="text-[11px] text-white/50">Cortex Intelligent Workspace</p>
               </div>
-              <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                macOS HIG
-              </span>
             </div>
 
             {/* Conteúdo Dinâmico por Aba */}

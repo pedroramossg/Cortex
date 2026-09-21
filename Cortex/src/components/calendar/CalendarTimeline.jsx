@@ -7,14 +7,12 @@ import {
   Video, 
   Users, 
   Calendar as CalendarIcon,
-  RotateCcw,
   Plus
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Calendar } from "@/components/ui/calendar";
 import { MeetingDetailCard } from "@/components/calendar/MeetingDetailCard";
 import { EventFormDialog } from "@/components/calendar/EventFormDialog";
-import { MOCK_CALENDAR_EVENTS } from "@/mocks/calendarEvents";
 import calendarApi from "@/services/calendarApi";
 import { cn } from "cn";
 
@@ -117,32 +115,40 @@ const TimelineEventCard = React.memo(
  * Conectada ao Apple Calendar (EventKit) e Node.js API, com renderização otimizada para 120Hz.
  */
 export function CalendarTimeline({
-  events = MOCK_CALENDAR_EVENTS,
-  initialSelectedEventId = "evt-1",
+  events = [],
+  initialSelectedEventId = null,
   onSelectEvent,
 }) {
   const [currentDate, setCurrentDate] = useState(() => new Date());
   // Inicialização com cache SWR em memória para renderização com latência zero
-  const [eventsList, setEventsList] = useState(() => calendarApi.getCachedDayEvents(new Date()) || events);
+  const [eventsList, setEventsList] = useState(() => calendarApi.getCachedDayEvents(new Date()) || events || []);
   const [selectedEventId, setSelectedEventId] = useState(initialSelectedEventId);
   const [viewMode, setViewMode] = useState("timeline"); // "timeline" | "month"
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
 
-  // Carrega eventos reais da agenda (Apple Calendar nativo + Google Calendar) via SWR
+  const selectedDateKey = calendarApi.getLocalDateKey(currentDate);
+
+  // Salvaguarda: reseta a seleção de evento ao navegar entre dias para recolher o detalhe inferior
+  useEffect(() => {
+    setSelectedEventId(null);
+    onSelectEvent?.(null);
+  }, [selectedDateKey, onSelectEvent]);
+
+  // Carrega eventos reais da agenda (Apple Calendar nativo + Google Calendar) via SWR sem mocks
   useEffect(() => {
     let isCancelled = false;
 
     // 1. Aplicação imediata de dados em cache se disponíveis (zero latency)
     const cached = calendarApi.getCachedDayEvents(currentDate);
-    if (cached && cached.length > 0) {
+    if (cached) {
       setEventsList(cached);
     }
 
-    // 2. Revalidação em background não-bloqueante
-    calendarApi.loadDayEvents(currentDate, events)
+    // 2. Revalidação em background não-bloqueante (dados 100% reais)
+    calendarApi.loadDayEvents(currentDate, [])
       .then((loaded) => {
-        if (!isCancelled && Array.isArray(loaded) && loaded.length > 0) {
+        if (!isCancelled && Array.isArray(loaded)) {
           setEventsList(loaded);
         }
       })
@@ -153,7 +159,7 @@ export function CalendarTimeline({
     return () => {
       isCancelled = true;
     };
-  }, [currentDate, events]);
+  }, [currentDate]);
 
   const { text: dateDisplay, isToday } = useMemo(
     () => formatPillDate(currentDate),
@@ -274,20 +280,13 @@ export function CalendarTimeline({
     }
   };
 
-  const selectedDateKey = calendarApi.getLocalDateKey(currentDate);
-
-  // Filtra eventos para a data selecionada usando precisão de fuso horário local
+  // Filtra eventos para a data selecionada usando correspondência estrita por chave local
   const dayEvents = useMemo(() => {
     return eventsList.filter((e) => {
-      if (e.date) {
-        return e.date === selectedDateKey;
-      }
-      if (e.dateObj) {
-        return isSameDay(currentDate, e.dateObj);
-      }
-      return isToday;
+      const eventKey = e.date || (e.dateObj ? calendarApi.getLocalDateKey(e.dateObj) : null);
+      return eventKey === selectedDateKey;
     });
-  }, [eventsList, isToday, currentDate, selectedDateKey]);
+  }, [eventsList, selectedDateKey]);
 
   // Compromisso ativo selecionado para visualização no rodapé
   const selectedEvent = useMemo(() => {
@@ -425,27 +424,14 @@ export function CalendarTimeline({
                   ))}
                 </div>
               ) : (
-                /* Empty State Elegante para dias sem compromissos */
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-6 gap-3 text-white/50 h-full min-h-[220px]">
-                  <div className="w-10 h-10 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center justify-center text-white/40">
-                    <CalendarIcon className="w-5 h-5" />
+                /* Empty State Minimalista para dias sem compromissos */
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-8 gap-2.5 text-white/50 h-full min-h-[220px]">
+                  <div className="w-10 h-10 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-center text-white/30">
+                    <CalendarIcon className="w-5 h-5 stroke-[1.5]" />
                   </div>
-                  <div>
-                    <h4 className="text-xs font-semibold text-white/80">
-                      Dia Livre
-                    </h4>
-                    <p className="text-[11px] text-white/40 mt-1 max-w-[200px] leading-relaxed">
-                      Nenhum compromisso registrado para este dia.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleResetToday}
-                    className="mt-1 px-3 py-1 text-[11px] rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-white/70 hover:text-white transition-all flex items-center gap-1.5 outline-none"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                    <span>Voltar para Hoje</span>
-                  </button>
+                  <p className="text-xs text-white/40 font-medium">
+                    Nenhum compromisso agendado
+                  </p>
                 </div>
               )}
             </ScrollArea>

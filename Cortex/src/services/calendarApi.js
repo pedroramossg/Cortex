@@ -425,6 +425,8 @@ export async function loadDayEvents(date = new Date(), fallbackMocks = [], token
       for (const gev of googleEvents) {
         const sTime = gev.start?.dateTime ? new Date(gev.start.dateTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '09:00';
         const eTime = gev.end?.dateTime ? new Date(gev.end.dateTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '09:45';
+        const eventLocalKey = gev.start?.dateTime ? getLocalDateKey(new Date(gev.start.dateTime)) : dateKey;
+
         results.push({
           id: gev.id,
           title: gev.summary || 'Compromisso',
@@ -435,6 +437,8 @@ export async function loadDayEvents(date = new Date(), fallbackMocks = [], token
           calendarName: 'Google Calendar',
           platform: gev.hangoutLink ? 'meet' : null,
           meetingLink: gev.hangoutLink || null,
+          date: eventLocalKey,
+          dateObj: parseLocalDate(eventLocalKey),
           organizer: gev.organizer?.displayName || gev.organizer?.email || 'Organizador',
           isOrganizer: Boolean(gev.organizer?.self),
           attendees: (gev.attendees || []).map(a => ({
@@ -450,12 +454,15 @@ export async function loadDayEvents(date = new Date(), fallbackMocks = [], token
     // API offline or unauthenticated, expected in local preview/tests
   }
 
-  // Normaliza todos os eventos anexando a chave de data e dateObj local
-  const normalizedResults = results.map((e) => ({
-    ...e,
-    date: dateKey,
-    dateObj: e.dateObj || parseLocalDate(dateKey),
-  }));
+  // Normaliza todos os eventos anexando estritamente a chave local e dateObj
+  const normalizedResults = results.map((e) => {
+    const resolvedKey = e.date ? getLocalDateKey(e.date) : dateKey;
+    return {
+      ...e,
+      date: resolvedKey,
+      dateObj: e.dateObj || parseLocalDate(resolvedKey),
+    };
+  });
 
   // 3. Cache fresh results or fallback
   if (normalizedResults.length > 0) {
@@ -463,21 +470,22 @@ export async function loadDayEvents(date = new Date(), fallbackMocks = [], token
     return normalizedResults;
   }
 
-  if (dayEventsCache.has(dateKey) && dayEventsCache.get(dateKey).length > 0) {
-    return dayEventsCache.get(dateKey);
-  }
-
-  // 4. Fallback to mock data if no real events are available
+  // 4. Fallback isolado exclusivamente se mocks forem passados por parâmetro (ex: testes Jest)
   if (Array.isArray(fallbackMocks) && fallbackMocks.length > 0) {
-    const normalizedMocks = fallbackMocks.map((m) => ({
-      ...m,
-      date: dateKey,
-      dateObj: m.dateObj || parseLocalDate(dateKey),
-    }));
+    const normalizedMocks = fallbackMocks.map((m) => {
+      const resolvedMockKey = m.date ? getLocalDateKey(m.date) : dateKey;
+      return {
+        ...m,
+        date: resolvedMockKey,
+        dateObj: m.dateObj || parseLocalDate(resolvedMockKey),
+      };
+    });
     return normalizedMocks;
   }
 
-  return normalizedResults;
+  // 5. Dia livre (100% real sem dados mockados invasivos)
+  dayEventsCache.set(dateKey, []);
+  return [];
 }
 
 export default {
