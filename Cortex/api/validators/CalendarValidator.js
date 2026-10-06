@@ -29,3 +29,10 @@ export const listCalendarEventsSchema = z.object({
     maxResults: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(250)).optional(),
     calendarId: z.string().trim().max(255).optional()
 }).strict();
+
+export const quickParseCalendarSchema = z.object({
+    text: z.string().trim().min(1, "Text is required").max(300, "Text must not exceed 300 characters"),
+    anchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)").optional(),
+    dayOfWeek: z.string().trim().max(50).optional(),
+    timeZone: z.string().trim().max(100).optional()
+}).strict();

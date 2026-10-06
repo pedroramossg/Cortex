@@ -182,14 +182,32 @@ export async function createAppleCalendarEvent(payload) {
   const dateKey = getDateKey(payload.date);
   const tempId = `apple-opt-${Date.now()}`;
 
+  // Roteamento seguro para o primeiro calendário gravável (isWritable: true) ou preferência salva
+  let targetCalName = payload.calendarName;
+  if (!targetCalName) {
+    const savedPref = typeof localStorage !== 'undefined' ? localStorage.getItem('cortex_default_calendar') : null;
+    if (savedPref) {
+      targetCalName = savedPref;
+    } else {
+      const cals = await getAppleCalendars().catch(() => []);
+      const writable = cals.find((c) => c.isWritable);
+      targetCalName = writable ? writable.title : 'Pessoal';
+    }
+  }
+
+  const enrichedPayload = {
+    ...payload,
+    calendarName: targetCalName,
+  };
+
   // 1. Optimistic SWR Cache Mutation (Immediate Zero-Latency)
   const optimisticEvent = {
     id: tempId,
     title: payload.title || 'Compromisso',
-    startTime: payload.startTime || '09:00',
-    endTime: payload.endTime || '09:45',
-    duration: '45 min',
-    calendarName: payload.calendarName || 'Pessoal',
+    startTime: formatTimeHHMM(payload.startTime || '09:00'),
+    endTime: formatTimeHHMM(payload.endTime || '10:00'),
+    duration: '1h',
+    calendarName: targetCalName,
     categoryColor: payload.categoryColor || '#3B82F6',
     description: payload.description || null,
     meetingLink: payload.meetingUrl || null,
@@ -215,7 +233,7 @@ export async function createAppleCalendarEvent(payload) {
 
   // 2. Asynchronous Native Dispatch (Rust / osascript)
   try {
-    const res = await invokeTauri('create_apple_calendar_event', { payload });
+    const res = await invokeTauri('create_apple_calendar_event', { payload: enrichedPayload });
     if (res) {
       // Reconcile optimistic ID with native ID in cache
       const current = dayEventsCache.get(dateKey) || [];
@@ -549,6 +567,120 @@ export async function loadDayEvents(date = new Date(), fallbackMocks = [], token
   }
 }
 
+/**
+ * Heuristic client-side parser for dates, times and event titles in pt-BR.
+ * Always resolves to today or nearest future date, with safe 1h duration.
+ */
+export function parseQuickEventHeuristic(text, anchorDateStr) {
+  const refDateStr = anchorDateStr || getLocalDateKey(new Date());
+  const [y, m, d] = refDateStr.split('-').map(Number);
+  const refDate = new Date(y, m - 1, d, 12, 0, 0);
+  const lower = text.toLowerCase();
+
+  let targetDate = new Date(refDate);
+  const dayMap = {
+    'domingo': 0,
+    'segunda': 1,
+    'segunda-feira': 1,
+    'terca': 2,
+    'terça': 2,
+    'terça-feira': 2,
+    'quarta': 3,
+    'quarta-feira': 3,
+    'quinta': 4,
+    'quinta-feira': 4,
+    'sexta': 5,
+    'sexta-feira': 5,
+    'sabado': 6,
+    'sábado': 6
+  };
+
+  if (/(?:^|\s)amanh[aã](?:$|\s|[.,!?])/i.test(lower)) {
+    targetDate.setDate(targetDate.getDate() + 1);
+  } else if (/(?:^|\s)hoje(?:$|\s|[.,!?])/i.test(lower)) {
+    // Mantém a data de hoje
+  } else {
+    for (const [dayName, dayIndex] of Object.entries(dayMap)) {
+      const regex = new RegExp(`(?:^|\\s)(?:na\\s+|no\\s+)?${dayName}(?:$|\\s|[.,!?])`, 'i');
+      if (regex.test(lower)) {
+        const currentDay = refDate.getDay();
+        let diff = dayIndex - currentDay;
+        if (diff <= 0) {
+          diff += 7; // Projeta sempre para o próximo dia correspondente, nunca passado
+        }
+        targetDate.setDate(targetDate.getDate() + diff);
+        break;
+      }
+    }
+  }
+
+  const resolvedDateStr = getLocalDateKey(targetDate);
+
+  let startTime = '09:00';
+  let endTime = '10:00';
+
+  const timeMatch = lower.match(/(?:[àa]s\s*)?(\d{1,2})(?:h(\d{2})?|:(\d{2}))/);
+  if (timeMatch) {
+    const hour = parseInt(timeMatch[1], 10);
+    const minute = parseInt(timeMatch[2] || timeMatch[3] || '0', 10);
+    if (!isNaN(hour) && hour >= 0 && hour <= 23) {
+      startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+      const endHour = (hour + 1) % 24;
+      endTime = `${String(endHour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    }
+  }
+
+  let cleanedTitle = text
+    .replace(/(?:^|\s)(?:na|no)\s+(?:segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)(?:-feira)?(?:\s|$)/gi, ' ')
+    .replace(/(?:^|\s)(?:segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)(?:-feira)?(?:\s|$)/gi, ' ')
+    .replace(/(?:^|\s)(?:amanh[aã]|hoje)(?:\s|$)/gi, ' ')
+    .replace(/(?:[àa]s\s*)?\d{1,2}(?:h(?:\d{1,2})?|:\d{2})/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleanedTitle) {
+    cleanedTitle = text.trim();
+  }
+
+  cleanedTitle = cleanedTitle.charAt(0).toUpperCase() + cleanedTitle.slice(1);
+
+  return {
+    title: cleanedTitle,
+    date: resolvedDateStr,
+    startTime,
+    endTime
+  };
+}
+
+/**
+ * Natural language event parsing bridging Express backend NLP and local heuristic
+ */
+export async function parseQuickEvent(text, options = {}) {
+  const today = new Date();
+  const anchorDate = options.anchorDate || getLocalDateKey(today);
+  const dayOfWeek = options.dayOfWeek || today.toLocaleDateString('pt-BR', { weekday: 'long' });
+  const timeZone = options.timeZone || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'America/Sao_Paulo');
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/calendar/parse-quick`, {
+      method: 'POST',
+      headers: getAuthHeaders(options.token),
+      body: JSON.stringify({ text, anchorDate, dayOfWeek, timeZone })
+    });
+
+    if (response.ok) {
+      const json = await response.json();
+      if (json.success && json.data?.title && json.data?.date) {
+        return json.data;
+      }
+    }
+  } catch (err) {
+    console.warn('[calendarApi] NLP backend call bypassed, using local heuristic:', err.message || err);
+  }
+
+  return parseQuickEventHeuristic(text, anchorDate);
+}
+
 export default {
   getLocalDateKey,
   getDateKey,
@@ -566,4 +698,6 @@ export default {
   deleteEvent,
   loadDayEvents,
   formatTimeHHMM,
+  parseQuickEvent,
+  parseQuickEventHeuristic,
 };

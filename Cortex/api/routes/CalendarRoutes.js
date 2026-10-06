@@ -2,7 +2,7 @@ import express from 'express';
 import * as calendarController from '../controllers/CalendarController.js';
 import { requireAuth } from '../middleware/requireAuth.js';
 import { validate } from '../middleware/validate.js';
-import { createCalendarEventSchema } from '../validators/CalendarValidator.js';
+import { createCalendarEventSchema, quickParseCalendarSchema } from '../validators/CalendarValidator.js';
 
 const router = express.Router();
 
@@ -118,5 +118,38 @@ router.get('/events', requireAuth, calendarController.listEvents);
  *         description: User or event not found
  */
 router.delete('/events/:id', requireAuth, calendarController.deleteEvent);
+
+/**
+ * @swagger
+ * /calendar/parse-quick:
+ *   post:
+ *     summary: Parse natural language calendar text into structured event
+ *     description: Converts natural language (e.g. "atividade na quinta às 14h") into title, date and times.
+ *     tags:
+ *       - Calendar
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - text
+ *             properties:
+ *               text:
+ *                 type: string
+ *               anchorDate:
+ *                 type: string
+ *               dayOfWeek:
+ *                 type: string
+ *               timeZone:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Parsed calendar event details
+ *       400:
+ *         description: Validation error
+ */
+router.post('/parse-quick', validate(quickParseCalendarSchema), calendarController.quickParse);
 
 export default router;

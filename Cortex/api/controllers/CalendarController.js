@@ -1,4 +1,5 @@
 import calendarService from '../services/CalendarService.js';
+import nlpCalendarService from '../services/nlpCalendarService.js';
 import * as User from '../models/Auth.js';
 
 export const createEvent = async (req, res, next) => {
@@ -68,6 +69,19 @@ export const deleteEvent = async (req, res, next) => {
         return res.status(200).json({
             success: true,
             message: 'Calendar event deleted successfully'
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const quickParse = async (req, res, next) => {
+    try {
+        const result = await nlpCalendarService.parseQuickCalendarEvent(req.body);
+        return res.status(200).json({
+            success: true,
+            message: 'Texto interpretado com sucesso',
+            data: result
         });
     } catch (error) {
         next(error);

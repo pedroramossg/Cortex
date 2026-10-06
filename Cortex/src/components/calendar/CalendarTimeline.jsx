@@ -13,6 +13,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Calendar } from "@/components/ui/calendar";
 import { MeetingDetailCard } from "@/components/calendar/MeetingDetailCard";
 import { EventFormDialog } from "@/components/calendar/EventFormDialog";
+import { QuickEventInput } from "@/components/calendar/QuickEventInput";
 import calendarApi from "@/services/calendarApi";
 import { cn } from "cn";
 
@@ -321,6 +322,18 @@ export function CalendarTimeline({
 
   return (
     <div className="flex flex-col h-full min-h-0 select-none">
+      {/* Quick Add em Linguagem Natural */}
+      <div className="pb-2.5 px-0.5 shrink-0">
+        <QuickEventInput
+          placeholder="Adicionar rápido (ex: 'reunião quinta às 15h')..."
+          onEventCreated={(newEvent) => {
+            if (newEvent && newEvent.date === selectedDateKey) {
+              setEventsList((prev) => [newEvent, ...prev.filter((e) => e.id !== newEvent.id)]);
+            }
+          }}
+        />
+      </div>
+
       {/* 1. Header de Navegação (Timeline vs Mês) */}
       <div className="flex items-center justify-between pb-2.5 px-0.5 shrink-0">
         {viewMode === "timeline" ? (

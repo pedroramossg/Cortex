@@ -152,8 +152,17 @@ Return ONLY a valid JSON object matching this schema:
     /**
      * Core execution driver supporting Gemini (default) and OpenAI
      */
-    async callLLM({ systemPrompt, userPrompt }) {
+    async callLLM({ systemPrompt, userPrompt, temperature = 0.2 }) {
         if (process.env.NODE_ENV === 'test' && process.env.USE_REAL_AI !== 'true') {
+            // Check if this is a calendar parse prompt
+            if (systemPrompt && systemPrompt.includes('parser de calendário')) {
+                return JSON.stringify({
+                    title: "Atividade avaliativa do hélio",
+                    date: "2026-10-08",
+                    startTime: "14:00",
+                    endTime: "15:00"
+                });
+            }
             // Return mock JSON in test environment if no real keys or in hermetic tests
             return JSON.stringify({
                 options: [
@@ -169,12 +178,21 @@ Return ONLY a valid JSON object matching this schema:
         }
 
         if (this.provider === 'gemini' && process.env.GEMINI_API_KEY) {
-            return await this.callGemini({ systemPrompt, userPrompt });
+            return await this.callGemini({ systemPrompt, userPrompt, temperature });
         } else if (process.env.OPENAI_API_KEY) {
-            return await this.callOpenAI({ systemPrompt, userPrompt });
+            return await this.callOpenAI({ systemPrompt, userPrompt, temperature });
         }
 
         // Return deterministic mock if no external key is configured in dev
+        if (systemPrompt && systemPrompt.includes('parser de calendário')) {
+            return JSON.stringify({
+                title: "Atividade avaliativa do hélio",
+                date: "2026-10-08",
+                startTime: "14:00",
+                endTime: "15:00"
+            });
+        }
+
         return JSON.stringify({
             options: [
                 { intent: 'confirm', label: 'Confirmar', subject: 'Re: Alinhamento', body: 'Perfeito, vamos em frente!' },
@@ -188,7 +206,7 @@ Return ONLY a valid JSON object matching this schema:
         });
     }
 
-    async callGemini({ systemPrompt, userPrompt }) {
+    async callGemini({ systemPrompt, userPrompt, temperature = 0.2 }) {
         const apiKey = process.env.GEMINI_API_KEY;
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${apiKey}`;
 
@@ -203,7 +221,7 @@ Return ONLY a valid JSON object matching this schema:
             ],
             generationConfig: {
                 responseMimeType: "application/json",
-                temperature: 0.2
+                temperature
             }
         };
 
@@ -222,7 +240,7 @@ Return ONLY a valid JSON object matching this schema:
         return data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
     }
 
-    async callOpenAI({ systemPrompt, userPrompt }) {
+    async callOpenAI({ systemPrompt, userPrompt, temperature = 0.2 }) {
         const apiKey = process.env.OPENAI_API_KEY;
         const endpoint = 'https://api.openai.com/v1/chat/completions';
 
@@ -233,7 +251,7 @@ Return ONLY a valid JSON object matching this schema:
                 { role: 'user', content: userPrompt }
             ],
             response_format: { type: 'json_object' },
-            temperature: 0.2
+            temperature
         };
 
         const response = await fetch(endpoint, {

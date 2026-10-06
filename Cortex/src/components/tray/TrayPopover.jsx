@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   Sparkles, 
   Calendar, 
@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { QuickEventInput } from "@/components/calendar/QuickEventInput";
 
 /**
  * TrayPopover: Menu Bar popover compacto (320x420px) para o macOS System Tray
@@ -23,6 +24,26 @@ export function TrayPopover() {
   const [isSidebarActive, setIsSidebarActive] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [dockPreset, setDockPreset] = useState("Right");
+  const quickInputRef = useRef(null);
+
+  useEffect(() => {
+    // Foco suave com 50ms para contornar o atraso de foco do WebKit no macOS
+    const timer = setTimeout(() => {
+      quickInputRef.current?.focus();
+    }, 50);
+
+    const handleWindowFocus = () => {
+      setTimeout(() => {
+        quickInputRef.current?.focus();
+      }, 50);
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, []);
 
   useEffect(() => {
     // Consulta o estado inicial da Sidebar
@@ -99,8 +120,16 @@ export function TrayPopover() {
           </div>
         </div>
 
+        {/* Quick Add em Linguagem Natural */}
+        <div className="mt-2.5">
+          <QuickEventInput
+            ref={quickInputRef}
+            placeholder="Adicionar rápido (ex: 'reunião quinta às 15h')..."
+          />
+        </div>
+
         {/* Status das Integrações */}
-        <div className="mt-3">
+        <div className="mt-2.5">
           <div className="text-[10px] uppercase font-mono tracking-wider text-white/40 mb-1.5 px-0.5">
             Integrações
           </div>
