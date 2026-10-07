@@ -103,12 +103,12 @@ function App() {
   // Determina direção e classes do Flyout conforme o preset ativo
   const isLeftHalf = typeof window !== "undefined" && (window.screenX || 0) < (window.screen?.availWidth || 1920) / 2;
 
-  let flyoutPositionClass = "fixed right-[56px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+  let flyoutPositionClass = "fixed right-[68px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
   let flyoutInitialAnim = { opacity: 0, x: 20, scale: 0.98 };
   let flyoutExitAnim = { opacity: 0, x: 16, scale: 0.98 };
 
   if (dockPreset === "Left") {
-    flyoutPositionClass = "fixed left-[56px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+    flyoutPositionClass = "fixed left-[68px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
     flyoutInitialAnim = { opacity: 0, x: -20, scale: 0.98 };
     flyoutExitAnim = { opacity: 0, x: -16, scale: 0.98 };
   } else if (dockPreset === "TopCenter") {
@@ -117,11 +117,11 @@ function App() {
     flyoutExitAnim = { opacity: 0, y: -16, scale: 0.98 };
   } else if (dockPreset === "Custom") {
     if (isLeftHalf) {
-      flyoutPositionClass = "fixed left-[56px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+      flyoutPositionClass = "fixed left-[68px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
       flyoutInitialAnim = { opacity: 0, x: -20, scale: 0.98 };
       flyoutExitAnim = { opacity: 0, x: -16, scale: 0.98 };
     } else {
-      flyoutPositionClass = "fixed right-[56px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+      flyoutPositionClass = "fixed right-[68px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
       flyoutInitialAnim = { opacity: 0, x: 20, scale: 0.98 };
       flyoutExitAnim = { opacity: 0, x: 16, scale: 0.98 };
     }

@@ -26,33 +26,71 @@ const DEFAULT_IGNORED_CALENDARS = [
   "Holidays"
 ];
 
-const DEFAULT_HABITS = [
-  { id: "habit_workout", title: "First Workout", iconType: "workout" },
-  { id: "habit_read", title: "Read 10 pages", iconType: "read" },
-  { id: "habit_water", title: "Drink water", iconType: "water" },
-  { id: "habit_diet", title: "Healthy diet", iconType: "diet" },
-  { id: "habit_deep_work", title: "Deep Work", iconType: "work" },
-  { id: "habit_review", title: "Daily Review", iconType: "sparkles" },
+const URGENT_KEYWORDS = [
+  "prova",
+  "fmi",
+  "poo",
+  "entrega",
+  "seminário",
+  "seminario",
+  "apresentação",
+  "apresentacao",
+  "trabalho",
+  "quiz",
+  "exame",
+  "teste",
+  "atividade avaliativa"
 ];
+
+/**
+ * Dedução semântica do título de tarefa preparatória para prazos e provas futuras
+ */
+export function getPrepTaskTitle(title = "") {
+  const t = title.trim();
+  const lower = t.toLowerCase();
+  if (lower.startsWith("prova de ")) {
+    return `Estudar ${t.slice(9).trim()}`;
+  }
+  if (lower.startsWith("prova ")) {
+    return `Estudar ${t.slice(6).trim()}`;
+  }
+  if (lower.includes("fmi")) {
+    return "Estudar FMI";
+  }
+  if (lower.includes("poo")) {
+    return "Estudar POO";
+  }
+  if (lower.includes("entrega") || lower.includes("trabalho") || lower.includes("projeto")) {
+    return `Preparar ${t}`;
+  }
+  if (lower.includes("seminário") || lower.includes("seminario") || lower.includes("apresentação") || lower.includes("apresentacao")) {
+    return `Revisar ${t}`;
+  }
+  if (lower.includes("quiz") || lower.includes("teste") || lower.includes("exame")) {
+    return `Revisar ${t}`;
+  }
+  return `Estudar ${t}`;
+}
 
 /**
  * Mapeia palavras-chave do título do compromisso para ícones contextuais
  */
-function getTaskIcon(title = "", iconType = null) {
+function getTaskIcon(title = "", isPrep = false) {
+  if (isPrep) return GraduationCap;
   const t = title.toLowerCase();
-  if (iconType === "workout" || t.includes("workout") || t.includes("treino") || t.includes("academia") || t.includes("exercício")) {
+  if (t.includes("workout") || t.includes("treino") || t.includes("academia") || t.includes("exercício")) {
     return Dumbbell;
   }
-  if (iconType === "read" || t.includes("read") || t.includes("livro") || t.includes("leitura") || t.includes("ler") || t.includes("estudo") || t.includes("aula") || t.includes("prova")) {
-    return iconType === "read" ? BookOpen : GraduationCap;
+  if (t.includes("read") || t.includes("livro") || t.includes("leitura") || t.includes("ler") || t.includes("estudo") || t.includes("aula") || t.includes("prova")) {
+    return GraduationCap;
   }
-  if (iconType === "water" || t.includes("water") || t.includes("água") || t.includes("hidratar")) {
+  if (t.includes("water") || t.includes("água") || t.includes("hidratar")) {
     return Droplets;
   }
-  if (iconType === "diet" || t.includes("diet") || t.includes("comida") || t.includes("almoço") || t.includes("jantar") || t.includes("nutri")) {
+  if (t.includes("diet") || t.includes("comida") || t.includes("almoço") || t.includes("jantar") || t.includes("nutri")) {
     return Utensils;
   }
-  if (iconType === "work" || t.includes("reunião") || t.includes("meet") || t.includes("call") || t.includes("sync") || t.includes("alinhamento") || t.includes("projeto")) {
+  if (t.includes("reunião") || t.includes("meet") || t.includes("call") || t.includes("sync") || t.includes("alinhamento") || t.includes("projeto")) {
     return Briefcase;
   }
   if (t.includes("morning") || t.includes("manhã") || t.includes("acordar")) {
@@ -62,11 +100,11 @@ function getTaskIcon(title = "", iconType = null) {
 }
 
 /**
- * DailyTasksWidget: Módulo de tarefas diárias no Tray Popover inspirado fielmente na Imagem 4.
- * - Header com título, subtítulo e anel de progresso circular SVG (X/Y).
- * - Grade de 2 colunas com pílulas táteis (completas: branco radiante; pendentes: dark glass).
- * - Filtro configurável de calendários ignorados (Stremio, Séries, etc.).
- * - Persistência estável em localStorage por data (cortex_tasks_checked_YYYY-MM-DD).
+ * DailyTasksWidget: Motor de tarefas diárias contextuais do Apple Calendar com Lookahead Assíncrono Não-Bloqueante.
+ * - Renderiza imediatamente eventos reais de hoje a partir do cache (zero latência).
+ * - Varredura assíncrona não-bloqueante em background para D+1, D+2 e D+3 para detecção de provas/prazos.
+ * - Chave de tarefa preparatória isolada: `prep_${futureEvt.id || futureEvt.title}_${todayKey}`
+ * - Zero mocks genéricos; layout adaptativo (1 col, 2 col ou empty state limpo).
  */
 export function DailyTasksWidget({ className }) {
   const today = useMemo(() => new Date(), []);
@@ -83,11 +121,10 @@ export function DailyTasksWidget({ className }) {
     return DEFAULT_IGNORED_CALENDARS;
   });
 
-  // Modal / Popover de configurações de filtros
   const [showSettings, setShowSettings] = useState(false);
   const [newIgnoreName, setNewIgnoreName] = useState("");
 
-  // Conjunto de IDs de tarefas marcadas como concluídas
+  // Conjunto de IDs de tarefas marcadas como concluídas hoje
   const [checkedIds, setCheckedIds] = useState(() => {
     try {
       const saved = localStorage.getItem(`cortex_tasks_checked_${todayKey}`);
@@ -98,13 +135,18 @@ export function DailyTasksWidget({ className }) {
     return new Set();
   });
 
-  // Eventos reais do calendário para hoje
+  // 1. Injeção Síncrona Imediata do Cache em Memória de Hoje (Zero Latência)
   const [rawEvents, setRawEvents] = useState(() => {
     return calendarApi.getCachedDayEvents(today) || [];
   });
 
+  // 2. Tarefas de preparação geradas pelo Lookahead assíncrono para D+1, D+2, D+3
+  const [lookaheadTasks, setLookaheadTasks] = useState([]);
+
   useEffect(() => {
     let isCancelled = false;
+
+    // Revalidação em background de hoje
     calendarApi.loadDayEvents(today)
       .then((evts) => {
         if (!isCancelled && Array.isArray(evts)) {
@@ -112,12 +154,67 @@ export function DailyTasksWidget({ className }) {
         }
       })
       .catch(() => {
-        // Falhas silenciosas utilizam o cache ou fallback
+        // Fallbacks utilizam cache
       });
+
+    // Scan assíncrono não-bloqueante de D+1, D+2 e D+3 para provas e prazos futuros
+    const lookaheadDates = [1, 2, 3].map((offset) => {
+      const d = new Date(today);
+      d.setDate(d.getDate() + offset);
+      return d;
+    });
+
+    Promise.all(
+      lookaheadDates.map((d) => calendarApi.loadDayEvents(d).catch(() => []))
+    ).then((results) => {
+      if (isCancelled) return;
+      const detectedPreps = [];
+      const seenTitles = new Set();
+
+      results.forEach((dayEvts, idx) => {
+        if (!Array.isArray(dayEvts)) return;
+        for (const evt of dayEvts) {
+          const title = (evt.title || "").trim();
+          if (!title) continue;
+          const lowerTitle = title.toLowerCase();
+          const calName = (evt.calendarName || "").toLowerCase();
+
+          // Ignora calendários de ruído (Stremio, Séries, Feriados)
+          const isIgnored = ignoredCalendars.some((ign) => {
+            const l = ign.toLowerCase();
+            return calName.includes(l) || lowerTitle.includes(l);
+          });
+          if (isIgnored) continue;
+
+          // Detecta palavras-chave de prova/prazo urgente
+          const isUrgent = URGENT_KEYWORDS.some((kw) => lowerTitle.includes(kw));
+          if (isUrgent && !seenTitles.has(lowerTitle)) {
+            seenTitles.add(lowerTitle);
+            const daysAhead = idx + 1;
+            const dayLabel = daysAhead === 1 ? "Amanhã" : `Em ${daysAhead}d`;
+            // Chave isolada que nunca colide com o evento original futuro
+            const taskId = `prep_${evt.id || title}_${todayKey}`;
+
+            detectedPreps.push({
+              id: taskId,
+              title: getPrepTaskTitle(title),
+              originalTitle: title,
+              icon: GraduationCap,
+              isPrepTask: true,
+              daysAhead,
+              dayLabel,
+            });
+          }
+        }
+      });
+
+      setLookaheadTasks(detectedPreps);
+    }).catch(() => {});
+
     return () => {
       isCancelled = true;
     };
-  }, [today]);
+  }, [today, todayKey, ignoredCalendars]);
 
   // Salva calendários ignorados no localStorage
   const handleSaveIgnored = (newList) => {
@@ -164,7 +261,7 @@ export function DailyTasksWidget({ className }) {
     });
   };
 
-  // Filtra eventos reais excluindo calendários ignorados (Stremio, Séries, Feriados)
+  // Filtra eventos reais de hoje excluindo ruídos
   const filteredEvents = useMemo(() => {
     return rawEvents.filter((event) => {
       const calName = (event.calendarName || "").toLowerCase();
@@ -176,42 +273,36 @@ export function DailyTasksWidget({ className }) {
     });
   }, [rawEvents, ignoredCalendars]);
 
-  // Monta lista de 4 a 6 tarefas combinando eventos reais e hábitos saudáveis
+  // Monta lista de tarefas reais (Hoje + Prep Lookahead) - Zero Mocks
   const tasks = useMemo(() => {
     const list = [];
+    const seenIds = new Set();
 
-    // 1. Converte eventos reais em tarefas
+    // 1. Converte eventos reais de hoje em tarefas
     for (const evt of filteredEvents) {
-      // Chave composta estável à prova de revalidação
-      const taskId = evt.id || `${todayKey}_${evt.title}_${evt.startTime}`;
-      list.push({
-        id: taskId,
-        title: evt.title,
-        icon: getTaskIcon(evt.title),
-        isRealEvent: true,
-        startTime: evt.startTime,
-      });
-    }
-
-    // 2. Se houver menos de 6 tarefas, preenche com hábitos padrão (fiel à Imagem 4)
-    if (list.length < 6) {
-      for (const habit of DEFAULT_HABITS) {
-        if (list.length >= 6) break;
-        const habitId = `${todayKey}_${habit.id}`;
-        // Não duplica se já existir tarefa com mesmo título
-        if (!list.some((t) => t.title.toLowerCase() === habit.title.toLowerCase())) {
-          list.push({
-            id: habitId,
-            title: habit.title,
-            icon: getTaskIcon(habit.title, habit.iconType),
-            isRealEvent: false,
-          });
-        }
+      const taskId = evt.id || `${todayKey}_${evt.title}_${evt.startTime || "evt"}`;
+      if (!seenIds.has(taskId)) {
+        seenIds.add(taskId);
+        list.push({
+          id: taskId,
+          title: evt.title,
+          icon: getTaskIcon(evt.title, false),
+          isRealEvent: true,
+          startTime: evt.startTime,
+        });
       }
     }
 
-    return list.slice(0, 6);
-  }, [filteredEvents, todayKey]);
+    // 2. Adiciona tarefas preparatórias futuras vindas do lookahead
+    for (const prep of lookaheadTasks) {
+      if (!seenIds.has(prep.id)) {
+        seenIds.add(prep.id);
+        list.push(prep);
+      }
+    }
+
+    return list;
+  }, [filteredEvents, lookaheadTasks, todayKey]);
 
   // Contagem de concluídos e progresso circular
   const completedCount = useMemo(() => {
@@ -221,53 +312,55 @@ export function DailyTasksWidget({ className }) {
   const totalCount = tasks.length;
   const progressRatio = totalCount > 0 ? completedCount / totalCount : 0;
 
-  // Parâmetros do Anel de Progresso SVG Circular (Imagem 4)
-  const radius = 13;
+  // Parâmetros do Anel de Progresso SVG Circular
+  const radius = 12;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference * (1 - progressRatio);
 
   return (
-    <div className={cn("obsidian-surface rounded-2xl p-3 select-none relative", className)}>
+    <div className={cn("obsidian-surface rounded-2xl p-2.5 select-none relative", className)}>
       {/* Header do Widget de Tarefas */}
-      <div className="flex items-center justify-between mb-2.5">
+      <div className="flex items-center justify-between mb-2">
         <div>
           <div className="flex items-center gap-1.5">
-            <h3 className="text-[13px] font-semibold text-white tracking-tight">Tasks</h3>
+            <h3 className="text-[12.5px] font-semibold text-white tracking-tight">Tasks</h3>
             <button
               type="button"
               onClick={() => setShowSettings(!showSettings)}
-              className="text-white/40 hover:text-white/80 p-0.5 rounded transition-colors"
-              title="Configurar calendários ignorados (Stremio/Séries)"
+              className="text-white/40 hover:text-white/80 p-0.5 rounded transition-colors cursor-pointer"
+              title="Configurar filtros de calendário (ex: Stremio/Séries)"
             >
               <Settings className="w-3 h-3" />
             </button>
           </div>
-          <p className="text-[10px] text-white/50 tracking-tight">
-            {completedCount === totalCount && totalCount > 0
-              ? "All done for today! 🎉"
-              : "Great start to the day"}
+          <p className="text-[9.5px] text-white/50 tracking-tight">
+            {totalCount === 0
+              ? "Sem tarefas pendentes"
+              : completedCount === totalCount
+              ? "Tudo concluído por hoje! 🎉"
+              : `${completedCount} de ${totalCount} concluídas`}
           </p>
         </div>
 
-        {/* Circular Progress Ring SVG (Imagem 4) */}
-        <div className="relative flex items-center justify-center w-9 h-9 shrink-0">
-          <svg className="w-9 h-9 -rotate-90 transform" viewBox="0 0 32 32">
+        {/* Circular Progress Ring SVG */}
+        <div className="relative flex items-center justify-center w-8 h-8 shrink-0">
+          <svg className="w-8 h-8 -rotate-90 transform" viewBox="0 0 30 30">
             {/* Trilha do fundo */}
             <circle
-              cx="16"
-              cy="16"
+              cx="15"
+              cy="15"
               r={radius}
               className="stroke-white/15"
-              strokeWidth="2.2"
+              strokeWidth="2"
               fill="transparent"
             />
             {/* Arco de progresso ativo com glow */}
             <circle
-              cx="16"
-              cy="16"
+              cx="15"
+              cy="15"
               r={radius}
               stroke="white"
-              strokeWidth="2.2"
+              strokeWidth="2"
               strokeDasharray={circumference}
               strokeDashoffset={strokeDashoffset}
               strokeLinecap="round"
@@ -278,7 +371,7 @@ export function DailyTasksWidget({ className }) {
               }}
             />
           </svg>
-          <span className="absolute text-[9.5px] font-semibold text-white tracking-tighter">
+          <span className="absolute text-[9px] font-semibold text-white tracking-tighter">
             {completedCount}/{totalCount}
           </span>
         </div>
@@ -286,31 +379,31 @@ export function DailyTasksWidget({ className }) {
 
       {/* Painel Retrátil de Configurações de Calendários Ignorados */}
       {showSettings && (
-        <div className="mb-2.5 p-2 rounded-xl bg-black/60 border border-white/10 text-xs animate-in fade-in zoom-in-95 duration-150">
-          <div className="flex items-center justify-between pb-1.5 border-b border-white/10 mb-1.5">
-            <span className="text-[10px] font-mono uppercase text-white/60">Filtro de Calendários</span>
+        <div className="mb-2 p-2 rounded-xl bg-black/60 border border-white/10 text-xs animate-in fade-in zoom-in-95 duration-150">
+          <div className="flex items-center justify-between pb-1 border-b border-white/10 mb-1.5">
+            <span className="text-[9.5px] font-mono uppercase text-white/60">Filtro de Calendários</span>
             <button
               type="button"
               onClick={() => setShowSettings(false)}
-              className="text-white/40 hover:text-white"
+              className="text-white/40 hover:text-white cursor-pointer"
             >
               <X className="w-3 h-3" />
             </button>
           </div>
-          <p className="text-[9.5px] text-white/50 mb-1.5">
-            Ignorar séries, filmes ou ruídos de agenda (ex: Stremio):
+          <p className="text-[9px] text-white/50 mb-1.5">
+            Ignorar ruídos de agenda (ex: Stremio, Séries):
           </p>
           <div className="flex flex-wrap gap-1 mb-2">
             {ignoredCalendars.map((name) => (
               <span
                 key={name}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/10 text-[9.5px] text-white/80 border border-white/10"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/10 text-[9px] text-white/80 border border-white/10"
               >
                 <span>{name}</span>
                 <button
                   type="button"
                   onClick={() => handleRemoveIgnored(name)}
-                  className="hover:text-red-400"
+                  className="hover:text-red-400 cursor-pointer"
                 >
                   <X className="w-2.5 h-2.5" />
                 </button>
@@ -323,11 +416,11 @@ export function DailyTasksWidget({ className }) {
               value={newIgnoreName}
               onChange={(e) => setNewIgnoreName(e.target.value)}
               placeholder="Novo calendário para ignorar..."
-              className="flex-1 bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-white outline-none focus:border-white/30"
+              className="flex-1 bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-[9.5px] text-white outline-none focus:border-white/30"
             />
             <button
               type="submit"
-              className="px-2 py-0.5 bg-white/15 hover:bg-white/25 rounded text-[10px] font-medium text-white flex items-center gap-0.5"
+              className="px-2 py-0.5 bg-white/15 hover:bg-white/25 rounded text-[9.5px] font-medium text-white flex items-center gap-0.5 cursor-pointer"
             >
               <Plus className="w-2.5 h-2.5" /> Add
             </button>
@@ -335,61 +428,83 @@ export function DailyTasksWidget({ className }) {
         </div>
       )}
 
-      {/* Grade de 2 Colunas com Cartões em Formato de Pílula (Imagem 4) */}
-      <div className="grid grid-cols-2 gap-2">
-        {tasks.map((task) => {
-          const isDone = checkedIds.has(task.id);
-          const Icon = task.icon;
+      {/* Layout Adaptativo: Empty State vs 1 Coluna vs 2 Colunas */}
+      {tasks.length === 0 ? (
+        <div className="py-3 px-2 flex flex-col items-center justify-center text-center rounded-xl bg-white/[0.02] border border-white/[0.04]">
+          <Sparkles className="w-4 h-4 text-emerald-400/70 mb-1" />
+          <p className="text-[11px] font-medium text-white/70">Nenhum compromisso ou prazo urgente hoje</p>
+          <p className="text-[9.5px] text-white/40">Sua agenda está livre ☕</p>
+        </div>
+      ) : (
+        <div
+          className={cn(
+            "grid gap-1.5",
+            tasks.length === 1 ? "grid-cols-1" : "grid-cols-2"
+          )}
+        >
+          {tasks.map((task) => {
+            const isDone = checkedIds.has(task.id);
+            const Icon = task.icon;
 
-          return (
-            <button
-              key={task.id}
-              type="button"
-              onClick={() => toggleTask(task.id)}
-              className={cn(
-                "w-full rounded-full py-1.5 px-2 flex items-center justify-between select-none cursor-pointer text-left transition-all duration-200",
-                isDone
-                  ? "bg-white text-black shadow-[0_0_16px_rgba(255,255,255,0.35)] hover:bg-white/95"
-                  : "bg-white/[0.04] text-white/80 border border-white/5 hover:bg-white/[0.08] hover:text-white"
-              )}
-            >
-              {/* Badge Circular com Ícone à Esquerda */}
-              <div
+            return (
+              <button
+                key={task.id}
+                type="button"
+                onClick={() => toggleTask(task.id)}
                 className={cn(
-                  "w-5 h-5 rounded-full flex items-center justify-center shrink-0 transition-colors",
+                  "w-full rounded-full py-1.5 px-2 flex items-center justify-between select-none cursor-pointer text-left transition-all duration-200",
                   isDone
-                    ? "bg-black/90 text-white"
-                    : "bg-white/10 text-white/80"
+                    ? "bg-white text-black shadow-[0_0_14px_rgba(255,255,255,0.35)] hover:bg-white/95"
+                    : "bg-white/[0.04] text-white/80 border border-white/5 hover:bg-white/[0.08] hover:text-white"
                 )}
               >
-                <Icon className="w-3 h-3 stroke-[2.2]" />
-              </div>
-
-              {/* Título da Tarefa / Compromisso */}
-              <span
-                className={cn(
-                  "text-[11px] truncate flex-1 mx-1.5 transition-colors",
-                  isDone
-                    ? "font-semibold text-black"
-                    : "font-medium text-white/80"
-                )}
-                title={task.title}
-              >
-                {task.title}
-              </span>
-
-              {/* Indicador à Direita: Checkmark na concluída, Círculo vazio na pendente */}
-              {isDone ? (
-                <div className="w-4 h-4 flex items-center justify-center shrink-0 animate-in zoom-in-75 duration-150">
-                  <Check className="w-3.5 h-3.5 text-black stroke-[3]" />
+                {/* Badge Circular com Ícone à Esquerda */}
+                <div
+                  className={cn(
+                    "w-4.5 h-4.5 rounded-full flex items-center justify-center shrink-0 transition-colors",
+                    isDone
+                      ? "bg-black/90 text-white"
+                      : task.isPrepTask
+                      ? "bg-emerald-500/20 text-emerald-300"
+                      : "bg-white/10 text-white/80"
+                  )}
+                >
+                  <Icon className="w-2.5 h-2.5 stroke-[2.2]" />
                 </div>
-              ) : (
-                <div className="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0" />
-              )}
-            </button>
-          );
-        })}
-      </div>
+
+                {/* Título da Tarefa / Compromisso */}
+                <span
+                  className={cn(
+                    "text-[10.5px] truncate flex-1 mx-1.5 transition-colors",
+                    isDone
+                      ? "font-semibold text-black"
+                      : "font-medium text-white/80"
+                  )}
+                  title={task.isPrepTask ? `${task.title} (${task.originalTitle} - ${task.dayLabel})` : task.title}
+                >
+                  {task.title}
+                </span>
+
+                {/* Tag de Prazo Futuro (Lookahead) se aplicável */}
+                {task.isPrepTask && !isDone && (
+                  <span className="text-[8.5px] font-mono text-emerald-400/80 mr-1 shrink-0">
+                    {task.dayLabel}
+                  </span>
+                )}
+
+                {/* Indicador à Direita: Checkmark na concluída, Círculo vazio na pendente */}
+                {isDone ? (
+                  <div className="w-3.5 h-3.5 flex items-center justify-center shrink-0 animate-in zoom-in-75 duration-150">
+                    <Check className="w-3 h-3 text-black stroke-[3]" />
+                  </div>
+                ) : (
+                  <div className="w-3 h-3 rounded-full border border-white/20 shrink-0" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

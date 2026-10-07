@@ -713,6 +713,53 @@ export async function parseQuickEvent(text, options = {}) {
   return parseQuickEventHeuristic(text, anchorDate, availableCalendars);
 }
 
+// ==========================================
+// 6. Calendar Settings & Filtering Persistence
+// ==========================================
+const CALENDAR_SETTINGS_STORAGE_KEY = "cortex_calendar_settings";
+export const DEFAULT_HIDDEN_CALENDARS = ["Stremio", "Séries", "Series"];
+
+/**
+ * Retrieves persisted calendar settings (hidden calendars and order)
+ * @returns {{ hiddenCalendars: string[], calendarOrder: string[] }}
+ */
+export function getCalendarSettings() {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return { hiddenCalendars: [...DEFAULT_HIDDEN_CALENDARS], calendarOrder: [] };
+  }
+  try {
+    const raw = localStorage.getItem(CALENDAR_SETTINGS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        hiddenCalendars: Array.isArray(parsed.hiddenCalendars) ? parsed.hiddenCalendars : [...DEFAULT_HIDDEN_CALENDARS],
+        calendarOrder: Array.isArray(parsed.calendarOrder) ? parsed.calendarOrder : [],
+      };
+    }
+  } catch (err) {
+    console.warn("[calendarApi] Falha ao ler cortex_calendar_settings:", err);
+  }
+  return { hiddenCalendars: [...DEFAULT_HIDDEN_CALENDARS], calendarOrder: [] };
+}
+
+/**
+ * Persists updated calendar settings to localStorage
+ * @param {{ hiddenCalendars?: string[], calendarOrder?: string[] }} settings
+ */
+export function saveCalendarSettings(settings) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    const current = getCalendarSettings();
+    const updated = {
+      ...current,
+      ...settings,
+    };
+    localStorage.setItem(CALENDAR_SETTINGS_STORAGE_KEY, JSON.stringify(updated));
+  } catch (err) {
+    console.warn("[calendarApi] Falha ao persistir cortex_calendar_settings:", err);
+  }
+}
+
 export const calendarApi = {
   getLocalDateKey,
   getDateKey,
@@ -732,6 +779,9 @@ export const calendarApi = {
   formatTimeHHMM,
   parseQuickEvent,
   parseQuickEventHeuristic,
+  getCalendarSettings,
+  saveCalendarSettings,
+  DEFAULT_HIDDEN_CALENDARS,
 };
 
 export default calendarApi;

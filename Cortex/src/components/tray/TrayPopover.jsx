@@ -1,12 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
   Sparkles, 
-  Calendar, 
-  Mail, 
-  FileText, 
   Sidebar as SidebarIcon,
   RefreshCw,
-  Plus,
   Power
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -18,8 +14,9 @@ import { QuickEventInput } from "@/components/calendar/QuickEventInput";
 import { DailyTasksWidget } from "@/components/tray/DailyTasksWidget";
 
 /**
- * TrayPopover: Menu Bar popover compacto (320x580px) para o macOS System Tray
- * Exibe status de integrações, resumo diário, atalhos, toggle da Sidebar e presets de posição.
+ * TrayPopover: Menu Bar popover minimalista (320x540px) para o macOS System Tray.
+ * Hierarquia estrita e limpa: Header Minimalista -> Quick Add -> DailyTasksWidget -> Rodapé de Ajustes.
+ * ZERO scrollbar e ZERO corte visual.
  */
 export function TrayPopover() {
   const [isSidebarActive, setIsSidebarActive] = useState(true);
@@ -99,111 +96,54 @@ export function TrayPopover() {
   };
 
   return (
-    <div className="w-[320px] h-[580px] obsidian-surface rounded-2xl p-3.5 flex flex-col justify-between text-white select-none overflow-hidden hairline-border shadow-2xl">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-2.5 border-b border-white/10 shrink-0">
+    <div className="w-[320px] h-fit max-h-[420px] obsidian-surface rounded-2xl p-3 flex flex-col gap-2 text-white select-none overflow-hidden hairline-border shadow-2xl">
+      {/* 1. Header Minimalista */}
+      <div className="flex items-center justify-between pb-1.5 border-b border-white/10 shrink-0">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-white/[0.08] border border-white/10 flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-emerald-400" />
+          <div className="relative flex items-center justify-center w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 shadow-[0_0_12px_rgba(16,185,129,0.3)]">
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
           </div>
-          <div>
+          <div className="flex items-baseline gap-1.5">
             <h1 className="text-xs font-semibold text-white tracking-tight leading-none">Cortex</h1>
-            <span className="text-[10px] text-white/50">Menu Bar Assistant</span>
+            <span className="text-[9.5px] text-white/40 font-mono">Menu Bar</span>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-          </span>
-          <span className="text-[10px] text-emerald-400 font-mono">Ativo</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
+          <span className="text-[10px] text-emerald-400/90 font-mono font-medium">Ativo</span>
         </div>
       </div>
 
-      {/* Conteúdo Central Rolável com Quick Add, Daily Tasks e Integrações */}
-      <div className="flex-1 overflow-y-auto space-y-2.5 my-2 pr-0.5">
-        {/* Quick Add em Linguagem Natural com GlowButton */}
+      {/* 2. Campo Quick Add em Linguagem Natural com GlowButton */}
+      <div className="shrink-0">
         <QuickEventInput
           ref={quickInputRef}
           placeholder="Adicionar rápido (ex: 'reunião quinta às 15h')..."
         />
-
-        {/* Daily Tasks Widget Fiel à Imagem 4 */}
-        <DailyTasksWidget />
-
-        {/* Status das Integrações */}
-        <div>
-          <div className="text-[10px] uppercase font-mono tracking-wider text-white/40 mb-1.5 px-0.5">
-            Integrações
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="obsidian-card rounded-xl p-2.5 flex flex-col gap-1">
-              <div className="flex items-center justify-between">
-                <Mail className="w-3.5 h-3.5 text-blue-400" />
-                <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-emerald-500/30 text-emerald-300 bg-emerald-500/10">
-                  Online
-                </Badge>
-              </div>
-              <span className="text-xs font-medium text-white/90 truncate">Google Workspace</span>
-              <span className="text-[10px] text-white/50">Gmail & Agenda</span>
-            </div>
-
-            <div className="obsidian-card rounded-xl p-2.5 flex flex-col gap-1">
-              <div className="flex items-center justify-between">
-                <FileText className="w-3.5 h-3.5 text-purple-400" />
-                <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-purple-500/30 text-purple-300 bg-purple-500/10">
-                  Sync
-                </Badge>
-              </div>
-              <span className="text-xs font-medium text-white/90 truncate">Obsidian Vault</span>
-              <span className="text-[10px] text-white/50">Vault Local</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Resumo do Dia */}
-        <div>
-          <div className="text-[10px] uppercase font-mono tracking-wider text-white/40 mb-1.5 px-0.5">
-            Resumo do Dia
-          </div>
-          <div className="obsidian-card rounded-xl p-2.5 flex flex-col gap-2 text-xs">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-white/80">
-                <span className="w-2 h-2 rounded-full bg-red-400" />
-                <span>3 urgências pendentes</span>
-              </div>
-              <span className="text-[10px] font-mono text-red-300 bg-red-500/10 px-1.5 py-0.5 rounded border border-red-500/20">
-                Ação
-              </span>
-            </div>
-            <div className="flex items-center justify-between pt-1.5 border-t border-white/5">
-              <div className="flex items-center gap-2 text-white/80">
-                <Calendar className="w-3.5 h-3.5 text-amber-400" />
-                <span className="truncate max-w-[170px]">15:30 — Alinhamento Produto</span>
-              </div>
-              <span className="text-[10px] text-white/40 font-mono">Em 45m</span>
-            </div>
-          </div>
-        </div>
       </div>
 
-      {/* Footer Controls & Sidebar Toggle */}
-      <div className="pt-2 border-t border-white/10 flex flex-col gap-2">
+      {/* 3. DailyTasksWidget Contextual Adaptativo (Zero Mocks) */}
+      <div className="shrink-0">
+        <DailyTasksWidget />
+      </div>
+
+      {/* 4. Rodapé de Ajustes e Ancoragem */}
+      <div className="pt-1.5 border-t border-white/10 shrink-0 flex flex-col gap-1.5">
         {/* Toggle da Sidebar Lateral */}
         <button
           type="button"
           onClick={handleToggleSidebar}
-          className="w-full flex items-center justify-between p-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/10 transition-colors text-xs text-white cursor-pointer"
+          className="w-full flex items-center justify-between p-1.5 px-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 transition-colors text-xs text-white cursor-pointer"
         >
           <div className="flex items-center gap-2">
-            <SidebarIcon className="w-4 h-4 text-blue-400" />
-            <span className="font-medium">Sidebar Lateral (Dock)</span>
+            <SidebarIcon className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="font-medium text-[11px]">Sidebar Lateral (Dock)</span>
           </div>
           <Badge 
             variant="outline" 
-            className={`text-[9px] px-1.5 py-0 h-4 ${
+            className={`text-[8.5px] px-1.5 py-0 h-4 ${
               isSidebarActive 
-                ? "border-blue-500/30 text-blue-300 bg-blue-500/20" 
+                ? "border-emerald-500/30 text-emerald-300 bg-emerald-500/15" 
                 : "border-white/20 text-white/40 bg-white/5"
             }`}
           >
@@ -212,8 +152,8 @@ export function TrayPopover() {
         </button>
 
         {/* Seletor de Presets de Posição do Dock */}
-        <div className="w-full flex items-center justify-between p-1.5 px-2.5 rounded-xl bg-white/[0.04] border border-white/10">
-          <span className="text-[11px] text-white/60 font-medium">Ancoragem</span>
+        <div className="w-full flex items-center justify-between p-1 px-2 rounded-xl bg-white/[0.03] border border-white/10">
+          <span className="text-[10.5px] text-white/60 font-medium">Ancoragem</span>
           <ToggleGroup
             type="single"
             value={dockPreset === "Custom" ? "" : dockPreset}
@@ -222,55 +162,46 @@ export function TrayPopover() {
           >
             <ToggleGroupItem
               value="Left"
-              className="h-5 px-2 text-[10px] text-white/70 rounded data-[state=on]:bg-blue-500/30 data-[state=on]:text-blue-200 data-[state=on]:border-blue-500/40 cursor-pointer"
+              className="h-4.5 px-1.5 text-[9.5px] text-white/70 rounded data-[state=on]:bg-emerald-500/30 data-[state=on]:text-emerald-200 data-[state=on]:border-emerald-500/40 cursor-pointer"
             >
               Esquerda
             </ToggleGroupItem>
             <ToggleGroupItem
               value="TopCenter"
-              className="h-5 px-2 text-[10px] text-white/70 rounded data-[state=on]:bg-blue-500/30 data-[state=on]:text-blue-200 data-[state=on]:border-blue-500/40 cursor-pointer"
+              className="h-4.5 px-1.5 text-[9.5px] text-white/70 rounded data-[state=on]:bg-emerald-500/30 data-[state=on]:text-emerald-200 data-[state=on]:border-emerald-500/40 cursor-pointer"
             >
               Notch
             </ToggleGroupItem>
             <ToggleGroupItem
               value="Right"
-              className="h-5 px-2 text-[10px] text-white/70 rounded data-[state=on]:bg-blue-500/30 data-[state=on]:text-blue-200 data-[state=on]:border-blue-500/40 cursor-pointer"
+              className="h-4.5 px-1.5 text-[9.5px] text-white/70 rounded data-[state=on]:bg-emerald-500/30 data-[state=on]:text-emerald-200 data-[state=on]:border-emerald-500/40 cursor-pointer"
             >
               Direita
             </ToggleGroupItem>
           </ToggleGroup>
         </div>
 
-        {/* Quick Actions */}
-        <div className="flex items-center gap-2">
+        {/* Quick Actions (Sincronizar e Encerrar) */}
+        <div className="flex items-center gap-1.5">
           <Button
             size="sm"
             variant="outline"
-            className="flex-1 h-8 text-[11px] bg-white/[0.04] border-white/10 hover:bg-white/[0.08] text-white/80 hover:text-white"
+            className="flex-1 h-6.5 text-[10.5px] bg-white/[0.04] border-white/10 hover:bg-white/[0.08] text-white/80 hover:text-white"
             onClick={handleQuickSync}
             disabled={isSyncing}
           >
-            <RefreshCw className={`w-3 h-3 mr-1.5 ${isSyncing ? "animate-spin text-blue-400" : ""}`} />
+            <RefreshCw className={`w-2.5 h-2.5 mr-1.5 ${isSyncing ? "animate-spin text-emerald-400" : ""}`} />
             {isSyncing ? "Sincronizando..." : "Sincronizar"}
           </Button>
 
           <Button
             size="sm"
             variant="outline"
-            className="h-8 px-2.5 text-[11px] bg-white/[0.04] border-white/10 hover:bg-white/[0.08] text-white/80 hover:text-white"
-            title="Nova Nota Obsidian"
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </Button>
-
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 px-2.5 text-[11px] bg-white/[0.04] border-white/10 hover:bg-red-500/20 hover:border-red-500/30 text-white/50 hover:text-red-300 transition-colors"
+            className="h-6.5 px-2 text-[10.5px] bg-white/[0.04] border-white/10 hover:bg-red-500/20 hover:border-red-500/30 text-white/50 hover:text-red-300 transition-colors"
             title="Encerrar Cortex"
             onClick={() => invoke("exit_app")}
           >
-            <Power className="w-3.5 h-3.5" />
+            <Power className="w-3 h-3" />
           </Button>
         </div>
       </div>
@@ -279,3 +210,4 @@ export function TrayPopover() {
 }
 
 export default TrayPopover;
+

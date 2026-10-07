@@ -77,14 +77,14 @@ pub fn compute_preset_geometry(
 ) -> (f64, f64, f64, f64) {
     match preset {
         DockPositionPreset::Right => {
-            let width = if expanded { 376.0 } else { 56.0 };
+            let width = if expanded { 428.0 } else { 68.0 };
             let height = 580.0;
             let x = mon_x + mon_width - width;
             let y = mon_y + (mon_height - height) / 2.0;
             (x, y, width, height)
         }
         DockPositionPreset::Left => {
-            let width = if expanded { 376.0 } else { 56.0 };
+            let width = if expanded { 428.0 } else { 68.0 };
             let height = 580.0;
             let x = mon_x;
             let y = mon_y + (mon_height - height) / 2.0;
@@ -106,7 +106,7 @@ pub fn compute_preset_geometry(
             }
         }
         DockPositionPreset::Custom => {
-            let width = if expanded { 376.0 } else { 56.0 };
+            let width = if expanded { 428.0 } else { 68.0 };
             let height = 580.0;
             (mon_x, mon_y, width, height)
         }
@@ -318,25 +318,8 @@ fn set_sidebar_expanded(
     let mon_size = monitor.size().to_logical::<f64>(scale_factor);
 
     let (target_x, target_y, target_width, target_height) = match preset {
-        DockPositionPreset::Right => {
-            let target_w = if expanded { 376.0 } else { 56.0 };
-            let target_h = 580.0;
-            let x = mon_pos.x + mon_size.width - target_w;
-            let y = mon_pos.y + (mon_size.height - target_h) / 2.0;
-            (x, y, target_w, target_h)
-        }
-        DockPositionPreset::Left => {
-            let target_w = if expanded { 376.0 } else { 56.0 };
-            let target_h = 580.0;
-            let x = mon_pos.x;
-            let y = mon_pos.y + (mon_size.height - target_h) / 2.0;
-            (x, y, target_w, target_h)
-        }
-        DockPositionPreset::TopCenter => {
-            let (target_w, target_h) = if expanded { (340.0, 580.0) } else { (260.0, 44.0) };
-            let x = mon_pos.x + (mon_size.width - target_w) / 2.0;
-            let y = mon_pos.y + 40.0;
-            (x, y, target_w, target_h)
+        DockPositionPreset::Right | DockPositionPreset::Left | DockPositionPreset::TopCenter => {
+            compute_preset_geometry(preset, expanded, mon_pos.x, mon_pos.y, mon_size.width, mon_size.height)
         }
         DockPositionPreset::Custom => {
             let current_pos = window
@@ -351,7 +334,7 @@ fn set_sidebar_expanded(
             let win_center_x = current_pos.x + (current_size.width / 2.0);
             let mon_center_x = mon_pos.x + (mon_size.width / 2.0);
 
-            let target_w = if expanded { 376.0 } else { 56.0 };
+            let target_w = if expanded { 428.0 } else { 68.0 };
             let target_h = 580.0;
 
             let raw_x = if win_center_x < mon_center_x {
@@ -360,9 +343,9 @@ fn set_sidebar_expanded(
             } else {
                 // Window is on right half: expand to the left
                 if expanded {
-                    current_pos.x - (376.0 - 56.0)
+                    current_pos.x - (428.0 - 68.0)
                 } else {
-                    current_pos.x + (376.0 - 56.0)
+                    current_pos.x + (428.0 - 68.0)
                 }
             };
 
@@ -448,7 +431,7 @@ fn execute_snap_and_restore(app: &tauri::AppHandle, state: &DockState) -> Result
         apply_dock_preset_geometry(&window, resolved_preset, false)
             .map_err(|e| format!("failed to apply preset geometry: {e}"))?;
     } else {
-        let target_w = 56.0;
+        let target_w = 68.0;
         let target_h = 580.0;
         let max_x = mon_pos.x + mon_size.width - target_w;
         let clamped_x = current_pos.x.clamp(mon_pos.x, max_x);
@@ -1327,17 +1310,17 @@ mod tests {
 
     #[test]
     fn test_sidebar_collapsed_dock_positioning() {
-        // Collapsed state: width = 56.0 on 1512x982 display
-        let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 56.0, 580.0);
-        assert_eq!(x, 1456.0); // 1512 - 56 = 1456 (exact right-dock)
+        // Collapsed state: width = 68.0 on 1512x982 display
+        let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 68.0, 580.0);
+        assert_eq!(x, 1444.0); // 1512 - 68 = 1444 (exact right-dock)
         assert_eq!(y, 201.0);  // (982 - 580) / 2 = 201
     }
 
     #[test]
     fn test_sidebar_expanded_dock_positioning() {
-        // Expanded state: width = 376.0 (56px dock + 320px flyout) on 1512x982 display
-        let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 376.0, 580.0);
-        assert_eq!(x, 1136.0); // 1512 - 376 = 1136
+        // Expanded state: width = 428.0 (68px dock + 320px flyout + 40px margin) on 1512x982 display
+        let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 428.0, 580.0);
+        assert_eq!(x, 1084.0); // 1512 - 428 = 1084
         assert_eq!(y, 201.0);  // (982 - 580) / 2 = 201
     }
 
@@ -1369,18 +1352,18 @@ mod tests {
 
     #[test]
     fn test_compute_preset_geometry_right() {
-        // Collapsed (56px)
+        // Collapsed (68px)
         let (x, y, w, h) = compute_preset_geometry(DockPositionPreset::Right, false, 0.0, 0.0, 1512.0, 982.0);
-        assert_eq!(x, 1456.0);
+        assert_eq!(x, 1444.0);
         assert_eq!(y, 201.0);
-        assert_eq!(w, 56.0);
+        assert_eq!(w, 68.0);
         assert_eq!(h, 580.0);
 
-        // Expanded (376px)
+        // Expanded (428px)
         let (x, y, w, h) = compute_preset_geometry(DockPositionPreset::Right, true, 0.0, 0.0, 1512.0, 982.0);
-        assert_eq!(x, 1136.0);
+        assert_eq!(x, 1084.0);
         assert_eq!(y, 201.0);
-        assert_eq!(w, 376.0);
+        assert_eq!(w, 428.0);
         assert_eq!(h, 580.0);
     }
 
@@ -1390,14 +1373,14 @@ mod tests {
         let (x, y, w, h) = compute_preset_geometry(DockPositionPreset::Left, false, 0.0, 0.0, 1512.0, 982.0);
         assert_eq!(x, 0.0);
         assert_eq!(y, 201.0);
-        assert_eq!(w, 56.0);
+        assert_eq!(w, 68.0);
         assert_eq!(h, 580.0);
 
         // Expanded
         let (x, y, w, h) = compute_preset_geometry(DockPositionPreset::Left, true, 0.0, 0.0, 1512.0, 982.0);
         assert_eq!(x, 0.0);
         assert_eq!(y, 201.0);
-        assert_eq!(w, 376.0);
+        assert_eq!(w, 428.0);
         assert_eq!(h, 580.0);
     }
 

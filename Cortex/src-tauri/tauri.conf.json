@@ -15,7 +15,7 @@
       {
         "label": "main",
         "title": "cortex",
-        "width": 56,
+        "width": 68,
         "height": 580,
         "decorations": false,
         "transparent": true,
@@ -29,7 +29,7 @@
         "title": "cortex_tray",
         "url": "index.html?view=tray",
         "width": 320,
-        "height": 580,
+        "height": 400,
         "decorations": false,
         "transparent": true,
         "shadow": false,
