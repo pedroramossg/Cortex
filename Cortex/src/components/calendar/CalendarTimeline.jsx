@@ -7,7 +7,8 @@ import {
   Video, 
   Users, 
   Calendar as CalendarIcon,
-  Plus
+  Plus,
+  Loader2
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Calendar } from "@/components/ui/calendar";
@@ -112,6 +113,28 @@ const TimelineEventCard = React.memo(
 );
 
 /**
+ * TimelineEventSkeleton: Card esquelético com animação acelerada por GPU (120Hz ProMotion).
+ * Estrutura visual e dimensões idênticas aos cards reais da timeline, eliminando layout shift.
+ */
+function TimelineEventSkeleton() {
+  return (
+    <div
+      className="h-16 w-full rounded-xl bg-white/[0.03] border border-white/5 animate-pulse flex items-center px-4 gap-3 mb-2.5 backdrop-blur-sm shadow-[inset_0_1px_0_0_rgba(255,255,255,0.02)]"
+      data-testid="timeline-skeleton-card"
+    >
+      {/* Indicador visual lateral simulado */}
+      <span className="w-1 h-8 rounded-full bg-white/10 shrink-0" />
+
+      {/* Linhas simuladas de texto */}
+      <div className="flex-1 min-w-0">
+        <div className="h-3.5 w-1/2 rounded bg-white/10 mb-1.5" />
+        <div className="h-2.5 w-1/4 rounded bg-white/5" />
+      </div>
+    </div>
+  );
+}
+
+/**
  * CalendarTimeline: Visualização de Timeline Diária & Grade Mensal na Sidebar do Cortex
  * Conectada ao Apple Calendar (EventKit) e Node.js API, com renderização otimizada para 120Hz.
  */
@@ -122,12 +145,16 @@ export function CalendarTimeline({
 }) {
   const [currentDate, setCurrentDate] = useState(() => new Date());
   // Inicialização com cache SWR em memória para renderização com latência zero
-  const [eventsList, setEventsList] = useState(() => calendarApi.getCachedDayEvents(new Date()) || events || []);
+  const initialCached = calendarApi.getCachedDayEvents(new Date());
+  const [eventsList, setEventsList] = useState(() => initialCached || events || []);
+  const [isLoadingDay, setIsLoadingDay] = useState(() => !initialCached && (!events || events.length === 0));
+  const [isRevalidating, setIsRevalidating] = useState(() => Boolean(initialCached));
   const [selectedEventId, setSelectedEventId] = useState(initialSelectedEventId);
   const [viewMode, setViewMode] = useState("timeline"); // "timeline" | "month"
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
   const lastFetchedKeyRef = useRef(null);
+  const activeDateKeyRef = useRef(calendarApi.getLocalDateKey(new Date()));
 
   const selectedDateKey = calendarApi.getLocalDateKey(currentDate);
 
@@ -140,28 +167,42 @@ export function CalendarTimeline({
   // Sincronização Reativa da Visão Mensal com a Timeline (Apple Calendar nativo + Google Calendar)
   useEffect(() => {
     let isCancelled = false;
+    activeDateKeyRef.current = selectedDateKey;
 
-    // 1. Aplicação imediata de dados em cache se disponíveis (zero latency)
+    // 1. Injeção Síncrona do Cache para Evitar Flash de 1 Frame
     const cached = calendarApi.getCachedDayEvents(currentDate);
     if (cached) {
       setEventsList(cached);
+      setIsLoadingDay(false);
+      setIsRevalidating(true);
+    } else {
+      setEventsList([]);
+      setIsLoadingDay(true);
+      setIsRevalidating(false);
     }
 
-    // 2. Revalidação em background (dados 100% reais)
     // Se a data já foi buscada com sucesso e está em cache, evita re-fetch disparado puramente por alternância de viewMode
     if (lastFetchedKeyRef.current === selectedDateKey && cached) {
+      setIsRevalidating(false);
       return;
     }
 
+    // 2. Revalidação em background (dados 100% reais)
     calendarApi.loadDayEvents(currentDate, [])
       .then((loaded) => {
-        if (!isCancelled && Array.isArray(loaded)) {
+        if (!isCancelled && activeDateKeyRef.current === selectedDateKey && Array.isArray(loaded)) {
           setEventsList(loaded);
           lastFetchedKeyRef.current = selectedDateKey;
         }
       })
       .catch((err) => {
         console.warn("[CalendarTimeline] Erro ao carregar eventos:", err.message || err);
+      })
+      .finally(() => {
+        if (!isCancelled && activeDateKeyRef.current === selectedDateKey) {
+          setIsLoadingDay(false);
+          setIsRevalidating(false);
+        }
       });
 
     return () => {
@@ -175,14 +216,20 @@ export function CalendarTimeline({
   );
 
   const handlePrevDay = () => {
+    setSelectedEventId(null);
+    onSelectEvent?.(null);
     setCurrentDate((prev) => new Date(prev.getFullYear(), prev.getMonth(), prev.getDate() - 1));
   };
 
   const handleNextDay = () => {
+    setSelectedEventId(null);
+    onSelectEvent?.(null);
     setCurrentDate((prev) => new Date(prev.getFullYear(), prev.getMonth(), prev.getDate() + 1));
   };
 
   const handleResetToday = () => {
+    setSelectedEventId(null);
+    onSelectEvent?.(null);
     setCurrentDate(new Date());
   };
 
@@ -373,6 +420,9 @@ export function CalendarTimeline({
             >
               <CalendarIcon className="w-3.5 h-3.5" />
               <span>{isToday ? `Hoje, ${dateDisplay.split(",")[1]?.trim() || dateDisplay}` : dateDisplay}</span>
+              {isRevalidating && (
+                <Loader2 className="w-3 h-3 text-white/40 animate-spin ml-0.5 shrink-0" />
+              )}
               <span className="text-[9px] uppercase font-mono px-1 py-0.2 rounded bg-white/10 text-white/60 ml-0.5">
                 Mês
               </span>
@@ -440,8 +490,16 @@ export function CalendarTimeline({
           >
             {/* Timeline Rolável via ScrollArea */}
             <ScrollArea className="flex-1 min-h-0 pr-1">
-              {dayEvents.length > 0 ? (
-                <div className="flex flex-col gap-2 pb-2">
+              {isLoadingDay ? (
+                /* 1. Estado de Carregamento Shimmer (3 Skeleton Cards) */
+                <div className="flex flex-col gap-2 pb-2" data-testid="timeline-loading-skeletons">
+                  <TimelineEventSkeleton key="skel-1" />
+                  <TimelineEventSkeleton key="skel-2" />
+                  <TimelineEventSkeleton key="skel-3" />
+                </div>
+              ) : dayEvents.length > 0 ? (
+                /* 2. Lista de Compromissos Reais com Transição Suave */
+                <div className="flex flex-col gap-2 pb-2 animate-in fade-in duration-200">
                   {dayEvents.map((event) => (
                     <TimelineEventCard
                       key={event.id}
@@ -452,8 +510,8 @@ export function CalendarTimeline({
                   ))}
                 </div>
               ) : (
-                /* Empty State Minimalista para dias sem compromissos */
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-8 gap-2.5 text-white/50 h-full min-h-[220px]">
+                /* 3. Empty State Minimalista para dias sem compromissos com Fade-In */
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-8 gap-2.5 text-white/50 h-full min-h-[220px] animate-in fade-in duration-200">
                   <div className="w-10 h-10 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-center text-white/30">
                     <CalendarIcon className="w-5 h-5 stroke-[1.5]" />
                   </div>
@@ -500,6 +558,8 @@ export function CalendarTimeline({
                 selected={currentDate}
                 onSelect={(date) => {
                   if (date) {
+                    setSelectedEventId(null);
+                    onSelectEvent?.(null);
                     setCurrentDate(date);
                     setViewMode("timeline");
                   }
