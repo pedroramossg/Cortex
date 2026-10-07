@@ -15,9 +15,10 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { QuickEventInput } from "@/components/calendar/QuickEventInput";
+import { DailyTasksWidget } from "@/components/tray/DailyTasksWidget";
 
 /**
- * TrayPopover: Menu Bar popover compacto (320x420px) para o macOS System Tray
+ * TrayPopover: Menu Bar popover compacto (320x580px) para o macOS System Tray
  * Exibe status de integrações, resumo diário, atalhos, toggle da Sidebar e presets de posição.
  */
 export function TrayPopover() {
@@ -98,43 +99,45 @@ export function TrayPopover() {
   };
 
   return (
-    <div className="w-[320px] h-[420px] mac-vibrancy rounded-2xl p-4 flex flex-col justify-between text-white select-none overflow-hidden hairline-border shadow-2xl">
+    <div className="w-[320px] h-[580px] obsidian-surface rounded-2xl p-3.5 flex flex-col justify-between text-white select-none overflow-hidden hairline-border shadow-2xl">
       {/* Header */}
-      <div>
-        <div className="flex items-center justify-between pb-3 border-b border-white/10">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-white/[0.08] border border-white/10 flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-blue-400" />
-            </div>
-            <div>
-              <h1 className="text-xs font-semibold text-white tracking-tight leading-none">Cortex</h1>
-              <span className="text-[10px] text-white/50">Menu Bar Assistant</span>
-            </div>
+      <div className="flex items-center justify-between pb-2.5 border-b border-white/10 shrink-0">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-white/[0.08] border border-white/10 flex items-center justify-center">
+            <Sparkles className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-            </span>
-            <span className="text-[10px] text-emerald-400 font-mono">Ativo</span>
+          <div>
+            <h1 className="text-xs font-semibold text-white tracking-tight leading-none">Cortex</h1>
+            <span className="text-[10px] text-white/50">Menu Bar Assistant</span>
           </div>
         </div>
+        <div className="flex items-center gap-1.5">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+          </span>
+          <span className="text-[10px] text-emerald-400 font-mono">Ativo</span>
+        </div>
+      </div>
 
-        {/* Quick Add em Linguagem Natural */}
-        <div className="mt-2.5">
-          <QuickEventInput
-            ref={quickInputRef}
-            placeholder="Adicionar rápido (ex: 'reunião quinta às 15h')..."
-          />
-        </div>
+      {/* Conteúdo Central Rolável com Quick Add, Daily Tasks e Integrações */}
+      <div className="flex-1 overflow-y-auto space-y-2.5 my-2 pr-0.5">
+        {/* Quick Add em Linguagem Natural com GlowButton */}
+        <QuickEventInput
+          ref={quickInputRef}
+          placeholder="Adicionar rápido (ex: 'reunião quinta às 15h')..."
+        />
+
+        {/* Daily Tasks Widget Fiel à Imagem 4 */}
+        <DailyTasksWidget />
 
         {/* Status das Integrações */}
-        <div className="mt-2.5">
+        <div>
           <div className="text-[10px] uppercase font-mono tracking-wider text-white/40 mb-1.5 px-0.5">
             Integrações
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <div className="card-surface rounded-xl p-2.5 flex flex-col gap-1">
+            <div className="obsidian-card rounded-xl p-2.5 flex flex-col gap-1">
               <div className="flex items-center justify-between">
                 <Mail className="w-3.5 h-3.5 text-blue-400" />
                 <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-emerald-500/30 text-emerald-300 bg-emerald-500/10">
@@ -145,7 +148,7 @@ export function TrayPopover() {
               <span className="text-[10px] text-white/50">Gmail & Agenda</span>
             </div>
 
-            <div className="card-surface rounded-xl p-2.5 flex flex-col gap-1">
+            <div className="obsidian-card rounded-xl p-2.5 flex flex-col gap-1">
               <div className="flex items-center justify-between">
                 <FileText className="w-3.5 h-3.5 text-purple-400" />
                 <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-purple-500/30 text-purple-300 bg-purple-500/10">
@@ -159,11 +162,11 @@ export function TrayPopover() {
         </div>
 
         {/* Resumo do Dia */}
-        <div className="mt-3">
+        <div>
           <div className="text-[10px] uppercase font-mono tracking-wider text-white/40 mb-1.5 px-0.5">
             Resumo do Dia
           </div>
-          <div className="card-surface rounded-xl p-2.5 flex flex-col gap-2 text-xs">
+          <div className="obsidian-card rounded-xl p-2.5 flex flex-col gap-2 text-xs">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-white/80">
                 <span className="w-2 h-2 rounded-full bg-red-400" />

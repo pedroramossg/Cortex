@@ -1,5 +1,6 @@
 import React, { useState, useRef, useImperativeHandle } from "react";
 import { Sparkles, Loader2, Check, AlertCircle } from "lucide-react";
+import { GlowButton } from "@/components/ui/GlowButton";
 import calendarApi from "@/services/calendarApi";
 import { cn } from "cn";
 
@@ -178,23 +179,19 @@ export const QuickEventInput = React.forwardRef(function QuickEventInput(
           />
         )}
 
-        {/* Indicador de Atalho [Enter] à Direita */}
+        {/* Botão Glow "Create" com Brilho Azul-Gelo (Fiel à Imagem 3) */}
         <div className="shrink-0 flex items-center gap-1 ml-1.5">
-          {text.trim().length > 0 && !isLoading && (
-            <button
-              type="submit"
-              className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/30 transition-colors flex items-center gap-0.5"
-              title="Criar evento (Enter)"
-            >
-              <span>Criar</span>
-              <span className="text-[10px]">↵</span>
-            </button>
-          )}
-
-          {text.trim().length === 0 && !isLoading && !isSuccess && (
-            <kbd className="hidden sm:inline-block text-[9.5px] font-mono text-white/30 bg-white/5 border border-white/10 rounded px-1.5 py-0.5">
-              ↵
-            </kbd>
+          {text.trim().length > 0 && !isLoading ? (
+            <GlowButton type="submit" size="sm" title="Criar evento (Enter)">
+              <span>Create</span>
+              <span className="text-[11px] font-mono opacity-80 font-bold ml-0.5">↵</span>
+            </GlowButton>
+          ) : (
+            !isLoading && !isSuccess && (
+              <kbd className="hidden sm:inline-block text-[9.5px] font-mono text-white/30 bg-white/5 border border-white/10 rounded px-1.5 py-0.5">
+                ↵
+              </kbd>
+            )
           )}
         </div>
       </form>

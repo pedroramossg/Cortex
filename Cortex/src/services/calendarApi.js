@@ -713,7 +713,7 @@ export async function parseQuickEvent(text, options = {}) {
   return parseQuickEventHeuristic(text, anchorDate, availableCalendars);
 }
 
-export default {
+export const calendarApi = {
   getLocalDateKey,
   getDateKey,
   parseLocalDate,
@@ -733,3 +733,6 @@ export default {
   parseQuickEvent,
   parseQuickEventHeuristic,
 };
+
+export default calendarApi;
+

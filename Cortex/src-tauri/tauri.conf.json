@@ -29,7 +29,7 @@
         "title": "cortex_tray",
         "url": "index.html?view=tray",
         "width": 320,
-        "height": 420,
+        "height": 580,
         "decorations": false,
         "transparent": true,
         "shadow": false,
