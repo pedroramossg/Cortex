@@ -34,5 +34,6 @@ export const quickParseCalendarSchema = z.object({
     text: z.string().trim().min(1, "Text is required").max(300, "Text must not exceed 300 characters"),
     anchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)").optional(),
     dayOfWeek: z.string().trim().max(50).optional(),
-    timeZone: z.string().trim().max(100).optional()
+    timeZone: z.string().trim().max(100).optional(),
+    availableCalendars: z.array(z.string().trim().max(100)).max(50).optional()
 }).strict();

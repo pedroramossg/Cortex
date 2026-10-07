@@ -52,8 +52,32 @@ describe('Quick Add em Linguagem Natural Suite (NLP, Heurística & API)', () => 
             const res = fallbackHeuristicParse('atividade avaliativa do hélio na quinta', anchorTuesday);
             expect(res.date).toBe('2026-10-08'); // Quinta-feira
             expect(res.title).toContain('Atividade avaliativa do hélio');
+            expect(res.title).not.toContain('na quinta');
             expect(res.startTime).toBe('09:00');
             expect(res.endTime).toBe('10:00'); // Duração padrão segura de 1h
+        });
+
+        it('deve rotear semanticamente termos acadêmicos para o calendário UFSC com título limpo', () => {
+            const available = ['Pessoal', 'UFSC', 'Trabalho'];
+            const res = fallbackHeuristicParse('atividade avaliativa do hélio na quinta às 14h', anchorTuesday, available);
+            expect(res.date).toBe('2026-10-08');
+            expect(res.startTime).toBe('14:00');
+            expect(res.endTime).toBe('15:00');
+            expect(res.targetCalendar).toBe('UFSC');
+            expect(res.title).toBe('Atividade avaliativa do hélio');
+            expect(res.title).not.toContain('na quinta');
+            expect(res.title).not.toContain('14h');
+        });
+
+        it('deve rotear termos profissionais para Trabalho e pessoais para Pessoal', () => {
+            const available = ['Pessoal', 'UFSC', 'Trabalho'];
+            const workRes = fallbackHeuristicParse('reunião de sprint amanhã às 10h', anchorTuesday, available);
+            expect(workRes.targetCalendar).toBe('Trabalho');
+            expect(workRes.title).not.toContain('amanhã');
+            expect(workRes.title).not.toContain('10h');
+
+            const personalRes = fallbackHeuristicParse('dentista amanhã às 16:30', anchorTuesday, available);
+            expect(personalRes.targetCalendar).toBe('Pessoal');
         });
 
         it('deve resolver horários explícitos com 1h de duração: "dentista amanhã às 16:30"', () => {
@@ -81,22 +105,25 @@ describe('Quick Add em Linguagem Natural Suite (NLP, Heurística & API)', () => 
     });
 
     describe('2. Endpoint HTTP POST /calendar/parse-quick', () => {
-        it('deve retornar 200 com evento estruturado ao receber texto válido', async () => {
+        it('deve retornar 200 com evento estruturado e targetCalendar ao receber texto válido e availableCalendars', async () => {
             const res = await request(app)
                 .post('/calendar/parse-quick')
                 .send({
-                    text: 'reunião com cliente na quinta às 15h',
+                    text: 'atividade avaliativa do hélio na quinta às 14h',
                     anchorDate: '2026-10-06',
                     dayOfWeek: 'terça-feira',
-                    timeZone: 'America/Sao_Paulo'
+                    timeZone: 'America/Sao_Paulo',
+                    availableCalendars: ['Pessoal', 'UFSC', 'Trabalho']
                 });
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
             expect(res.body.data).toBeDefined();
             expect(res.body.data.date).toBe('2026-10-08');
-            expect(res.body.data.startTime).toBe('15:00');
-            expect(res.body.data.endTime).toBe('16:00');
+            expect(res.body.data.startTime).toBe('14:00');
+            expect(res.body.data.endTime).toBe('15:00');
+            expect(res.body.data.targetCalendar).toBe('UFSC');
+            expect(res.body.data.title).not.toContain('na quinta');
         });
 
         it('deve retornar 400 se o campo text for omitido ou vazio', async () => {
@@ -112,12 +139,14 @@ describe('Quick Add em Linguagem Natural Suite (NLP, Heurística & API)', () => 
     });
 
     describe('3. Integração Frontend (calendarApi.js)', () => {
-        it('parseQuickEventHeuristic deve gerar a mesma estrutura de evento localmente', () => {
-            const result = parseQuickEventHeuristic('sprint planning amanhã às 10h', '2026-10-06');
-            expect(result.date).toBe('2026-10-07');
-            expect(result.startTime).toBe('10:00');
-            expect(result.endTime).toBe('11:00');
-            expect(result.title).toContain('Sprint planning');
+        it('parseQuickEventHeuristic deve gerar roteamento semântico idêntico no frontend', () => {
+            const available = ['Pessoal', 'UFSC', 'Trabalho'];
+            const result = parseQuickEventHeuristic('atividade avaliativa do hélio na quinta às 14h', '2026-10-06', available);
+            expect(result.date).toBe('2026-10-08');
+            expect(result.startTime).toBe('14:00');
+            expect(result.endTime).toBe('15:00');
+            expect(result.targetCalendar).toBe('UFSC');
+            expect(result.title).toBe('Atividade avaliativa do hélio');
         });
 
         it('createAppleCalendarEvent deve aplicar 1h de duração padrão e rotear para calendário seguro', async () => {
@@ -125,7 +154,8 @@ describe('Quick Add em Linguagem Natural Suite (NLP, Heurística & API)', () => 
                 title: 'Quick Event Test',
                 date: '2026-10-08',
                 startTime: '14:00',
-                endTime: '15:00'
+                endTime: '15:00',
+                calendarName: 'UFSC'
             });
 
             expect(createdId).toBeDefined();
@@ -134,7 +164,7 @@ describe('Quick Add em Linguagem Natural Suite (NLP, Heurística & API)', () => 
             expect(cached.length).toBe(1);
             expect(cached[0].title).toBe('Quick Event Test');
             expect(cached[0].duration).toBe('1h');
-            expect(cached[0].calendarName).toBeDefined();
+            expect(cached[0].calendarName).toBe('UFSC');
         });
     });
 });

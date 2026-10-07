@@ -526,8 +526,8 @@ pub struct AppleCalendar {
 /// Payload for creating an event in Apple Calendar
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CreateAppleEventPayload {
-    #[serde(rename = "calendarName")]
-    pub calendar_name: String,
+    #[serde(rename = "calendarName", alias = "targetCalendar", default)]
+    pub calendar_name: Option<String>,
     pub title: String,
     pub description: Option<String>,
     #[serde(rename = "startTime")]
@@ -761,7 +761,12 @@ end tell
 async fn create_apple_calendar_event(payload: CreateAppleEventPayload) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        let cal_name = sanitize_applescript_string(&payload.calendar_name);
+        let cal_name = payload
+            .calendar_name
+            .as_deref()
+            .map(sanitize_applescript_string)
+            .unwrap_or_default()
+            .replace('"', "\\\"");
         let title = sanitize_applescript_string(&payload.title);
         let description = payload
             .description
@@ -810,7 +815,44 @@ tell application "Calendar"
     set hours of endD to {eh}
     set minutes of endD to {emin}
 
-    tell calendar "{cal_name}"
+    set targetCal to missing value
+    if "{cal_name}" is not "" then
+        repeat with c in calendars
+            try
+                if (name of c as string) is "{cal_name}" then
+                    set targetCal to c
+                    exit repeat
+                end if
+            end try
+        end repeat
+        if targetCal is missing value then
+            repeat with c in calendars
+                try
+                    if (name of c as string) contains "{cal_name}" then
+                        set targetCal to c
+                        exit repeat
+                    end if
+                end try
+            end repeat
+        end if
+    end if
+
+    if targetCal is missing value then
+        repeat with c in calendars
+            try
+                if (writable of c) is true then
+                    set targetCal to c
+                    exit repeat
+                end if
+            end try
+        end repeat
+    end if
+
+    if targetCal is missing value then
+        set targetCal to first calendar
+    end if
+
+    tell targetCal
         set newEvt to make new event at end of events with properties {{summary:"{title}", start date:startD, end date:endD, description:"{description}", location:"{location}"}}
         return id of newEvt
     end tell

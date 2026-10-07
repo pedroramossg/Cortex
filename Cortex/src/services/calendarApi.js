@@ -571,7 +571,7 @@ export async function loadDayEvents(date = new Date(), fallbackMocks = [], token
  * Heuristic client-side parser for dates, times and event titles in pt-BR.
  * Always resolves to today or nearest future date, with safe 1h duration.
  */
-export function parseQuickEventHeuristic(text, anchorDateStr) {
+export function parseQuickEventHeuristic(text, anchorDateStr, availableCalendars = []) {
   const refDateStr = anchorDateStr || getLocalDateKey(new Date());
   const [y, m, d] = refDateStr.split('-').map(Number);
   const refDate = new Date(y, m - 1, d, 12, 0, 0);
@@ -644,11 +644,42 @@ export function parseQuickEventHeuristic(text, anchorDateStr) {
 
   cleanedTitle = cleanedTitle.charAt(0).toUpperCase() + cleanedTitle.slice(1);
 
+  // Roteamento Semântico Inteligente de Calendários
+  let targetCalendar = null;
+  const cals = Array.isArray(availableCalendars) ? availableCalendars : [];
+
+  const findCalendar = (candidates) => {
+    for (const cand of candidates) {
+      const found = cals.find((c) => c && c.toLowerCase().trim() === cand.toLowerCase().trim());
+      if (found) return found;
+    }
+    for (const cand of candidates) {
+      const found = cals.find((c) => c && c.toLowerCase().trim().includes(cand.toLowerCase().trim()));
+      if (found) return found;
+    }
+    return null;
+  };
+
+  const academicKeywords = ['ufsc', 'aula', 'hélio', 'helio', 'prova', 'atividade', 'trabalho acadêmico', 'disciplina', 'professor', 'faculdade', 'universidade', 'estudo', 'estudos', 'seminario', 'seminário'];
+  const workKeywords = ['reuniao', 'reunião', 'meeting', 'call', 'cliente', 'sprint', 'deploy', 'alinhamento', 'trabalho', 'work', 'projeto', '1:1', 'one-on-one'];
+  const personalKeywords = ['almoço', 'almoco', 'jantar', 'médico', 'medico', 'consulta', 'dentista', 'academia', 'compras', 'família', 'familia', 'casa', 'aniversário', 'aniversario'];
+
+  const matchesAny = (keywords) => keywords.some((k) => lower.includes(k));
+
+  if (matchesAny(academicKeywords)) {
+    targetCalendar = findCalendar(['UFSC', 'Faculdade', 'Estudos', 'Acadêmico', 'Universidade']) || (cals.includes('UFSC') ? 'UFSC' : null);
+  } else if (matchesAny(workKeywords)) {
+    targetCalendar = findCalendar(['Trabalho', 'Work', 'Profissional', 'Job']) || (cals.includes('Trabalho') ? 'Trabalho' : null);
+  } else if (matchesAny(personalKeywords)) {
+    targetCalendar = findCalendar(['Pessoal', 'Home', 'Família', 'Personal']) || (cals.includes('Pessoal') ? 'Pessoal' : null);
+  }
+
   return {
     title: cleanedTitle,
     date: resolvedDateStr,
     startTime,
-    endTime
+    endTime,
+    targetCalendar
   };
 }
 
@@ -660,12 +691,13 @@ export async function parseQuickEvent(text, options = {}) {
   const anchorDate = options.anchorDate || getLocalDateKey(today);
   const dayOfWeek = options.dayOfWeek || today.toLocaleDateString('pt-BR', { weekday: 'long' });
   const timeZone = options.timeZone || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'America/Sao_Paulo');
+  const availableCalendars = options.availableCalendars || [];
 
   try {
     const response = await fetch(`${API_BASE_URL}/calendar/parse-quick`, {
       method: 'POST',
       headers: getAuthHeaders(options.token),
-      body: JSON.stringify({ text, anchorDate, dayOfWeek, timeZone })
+      body: JSON.stringify({ text, anchorDate, dayOfWeek, timeZone, availableCalendars })
     });
 
     if (response.ok) {
@@ -678,7 +710,7 @@ export async function parseQuickEvent(text, options = {}) {
     console.warn('[calendarApi] NLP backend call bypassed, using local heuristic:', err.message || err);
   }
 
-  return parseQuickEventHeuristic(text, anchorDate);
+  return parseQuickEventHeuristic(text, anchorDate, availableCalendars);
 }
 
 export default {

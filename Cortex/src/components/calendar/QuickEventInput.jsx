@@ -19,6 +19,7 @@ export const QuickEventInput = React.forwardRef(function QuickEventInput(
   const [text, setText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [createdCal, setCreatedCal] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
   const internalInputRef = useRef(null);
 
@@ -39,38 +40,62 @@ export const QuickEventInput = React.forwardRef(function QuickEventInput(
       const dayOfWeek = now.toLocaleDateString("pt-BR", { weekday: "long" });
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo";
 
-      // 2. Parser de Linguagem Natural (Backend LLM ou Fallback Heurístico)
+      // 2. Coletar calendários graváveis conhecidos para inferência semântica
+      const cals = await calendarApi.getAppleCalendars().catch(() => []);
+      const writableCals = cals.filter((c) => c.isWritable);
+      const availableCalendars = writableCals.map((c) => c.title || c.id);
+
+      // 3. Parser de Linguagem Natural com Roteamento Semântico
       const parsed = await calendarApi.parseQuickEvent(trimmed, {
         anchorDate,
         dayOfWeek,
         timeZone,
+        availableCalendars,
       });
 
-      // 3. Roteamento seguro: primeiro calendário gravável ou preferência salva
-      const cals = await calendarApi.getAppleCalendars().catch(() => []);
-      const savedPref =
-        typeof localStorage !== "undefined"
-          ? localStorage.getItem("cortex_default_calendar")
-          : null;
-      const writable = cals.find((c) => c.isWritable);
-      const targetCal =
-        savedPref || (writable ? writable.title : "Pessoal");
+      // 4. Mapeamento do Calendário Alvo com Preservação de Cor
+      let targetCalObj = null;
+      if (parsed.targetCalendar) {
+        targetCalObj = cals.find(
+          (c) => (c.title || c.id || "").toLowerCase() === parsed.targetCalendar.toLowerCase()
+        );
+      }
+      if (!targetCalObj) {
+        const savedPref =
+          typeof localStorage !== "undefined"
+            ? localStorage.getItem("cortex_default_calendar")
+            : null;
+        if (savedPref) {
+          targetCalObj = cals.find(
+            (c) => (c.title || c.id || "").toLowerCase() === savedPref.toLowerCase()
+          );
+        }
+        if (!targetCalObj) {
+          targetCalObj = writableCals[0] || { title: "Pessoal", colorHex: "#38BDF8" };
+        }
+      }
 
-      // 4. Criação no Apple Calendar via Rust IPC + Mutação Otimista no Cache
+      const targetCal = targetCalObj?.title || targetCalObj?.id || "Pessoal";
+      const targetColor = targetCalObj?.colorHex || "#38BDF8";
+
+      // 5. Criação no Apple Calendar via Rust IPC + Mutação Otimista no Cache
       const createdId = await calendarApi.createAppleCalendarEvent({
         title: parsed.title,
         date: parsed.date,
         startTime: parsed.startTime,
         endTime: parsed.endTime,
         calendarName: targetCal,
+        categoryColor: targetColor,
       });
 
-      // 5. Feedback visual de sucesso
+      // 6. Feedback visual de sucesso com pílula da agenda
+      setCreatedCal({ name: targetCal, color: targetColor });
       setText("");
       setIsSuccess(true);
       setTimeout(() => {
         setIsSuccess(false);
-      }, 1800);
+        setCreatedCal(null);
+      }, 2000);
 
       onEventCreated?.({
         id: createdId,
@@ -79,6 +104,7 @@ export const QuickEventInput = React.forwardRef(function QuickEventInput(
         startTime: parsed.startTime,
         endTime: parsed.endTime,
         calendarName: targetCal,
+        categoryColor: targetColor,
       });
     } catch (err) {
       console.error("[QuickEventInput] Falha ao criar evento:", err);
@@ -122,23 +148,35 @@ export const QuickEventInput = React.forwardRef(function QuickEventInput(
           )}
         </div>
 
-        {/* Campo de Texto */}
-        <input
-          ref={internalInputRef}
-          type="text"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          autoFocus={autoFocus}
-          disabled={isLoading}
-          placeholder={errorMsg ? errorMsg : isSuccess ? "Evento adicionado com sucesso!" : placeholder}
-          className={cn(
-            "flex-1 bg-transparent border-0 outline-none p-0 text-xs text-white",
-            "placeholder:text-white/40 placeholder:text-[11.5px] disabled:opacity-60",
-            isSuccess && "placeholder:text-emerald-300 font-medium",
-            errorMsg && "placeholder:text-red-300"
-          )}
-        />
+        {/* Campo de Texto ou Pílula de Sucesso */}
+        {isSuccess && createdCal ? (
+          <div className="flex-1 flex items-center gap-1.5 text-xs text-emerald-300 font-medium select-none animate-in fade-in zoom-in-95 duration-200">
+            <span>Criado em</span>
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/10 border border-white/15 text-[11px] font-medium text-white shadow-sm">
+              <span
+                className="w-1.5 h-1.5 rounded-full shrink-0 shadow-[0_0_6px_rgba(255,255,255,0.4)]"
+                style={{ backgroundColor: createdCal.color }}
+              />
+              <span className="truncate max-w-[130px]">{createdCal.name}</span>
+            </span>
+          </div>
+        ) : (
+          <input
+            ref={internalInputRef}
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            autoFocus={autoFocus}
+            disabled={isLoading}
+            placeholder={errorMsg ? errorMsg : placeholder}
+            className={cn(
+              "flex-1 bg-transparent border-0 outline-none p-0 text-xs text-white",
+              "placeholder:text-white/40 placeholder:text-[11.5px] disabled:opacity-60",
+              errorMsg && "placeholder:text-red-300"
+            )}
+          />
+        )}
 
         {/* Indicador de Atalho [Enter] à Direita */}
         <div className="shrink-0 flex items-center gap-1 ml-1.5">

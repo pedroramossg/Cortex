@@ -2,11 +2,11 @@ import llmService from './LLMService.js';
 
 /**
  * Parses natural language calendar text into structured event details:
- * { title, date: 'YYYY-MM-DD', startTime: 'HH:MM', endTime: 'HH:MM' }
+ * { title, date: 'YYYY-MM-DD', startTime: 'HH:MM', endTime: 'HH:MM', targetCalendar: string | null }
  * Uses ultra-concise prompt (< 200 tokens total), temperature: 0,
- * markdown fence sanitization, and deterministic heuristic fallback.
+ * markdown fence sanitization, and deterministic semantic heuristic fallback.
  */
-export async function parseQuickCalendarEvent({ text, anchorDate, dayOfWeek, timeZone }) {
+export async function parseQuickCalendarEvent({ text, anchorDate, dayOfWeek, timeZone, availableCalendars = [] }) {
     if (!text || typeof text !== 'string') {
         throw new Error('Texto para parsing do calendário é obrigatório');
     }
@@ -18,14 +18,26 @@ export async function parseQuickCalendarEvent({ text, anchorDate, dayOfWeek, tim
 
     // Em modo de testes herméticos sem chave externa, usa a heurística determinística
     if (process.env.NODE_ENV === 'test' && process.env.USE_REAL_AI !== 'true') {
-        return fallbackHeuristicParse(cleanText, refDate);
+        return fallbackHeuristicParse(cleanText, refDate, availableCalendars);
     }
 
+    const calListStr = Array.isArray(availableCalendars) && availableCalendars.length > 0
+        ? availableCalendars.join(', ')
+        : 'Home, Trabalho, Pessoal';
+
     const systemPrompt = `Você é um parser de calendário pt-BR. Retorne ESTRITAMENTE um JSON com as chaves:
-{ "title": string, "date": "YYYY-MM-DD", "startTime": "HH:MM", "endTime": "HH:MM" }.
+{ "title": string, "date": "YYYY-MM-DD", "startTime": "HH:MM", "endTime": "HH:MM", "targetCalendar": string | null }.
+O campo 'title' deve conter APENAS o nome do evento, removendo termos de data e horário (ex: retorne 'Atividade avaliativa do Hélio' e NUNCA 'Atividade avaliativa do Hélio na quinta às 14h').
 Se nenhum horário for especificado, assuma 1 hora de duração padrão (startTime: "09:00", endTime: "10:00"). Se endTime não for especificado, defina como 1 hora após startTime.
 Dias da semana referem-se SEMPRE à data futura mais próxima. Se a data já tiver passado na semana corrente, projete para a mesma data da próxima semana (nunca retorne datas no passado a partir da data de referência).
-Data atual de referência: ${refDate} (${refDay}, fuso ${tz}).`;
+Data atual de referência: ${refDate} (${refDay}, fuso ${tz}).
+
+Calendários disponíveis: [${calListStr}].
+Analise o contexto do título e deduza qual calendário é o mais apropriado:
+- Termos acadêmicos (provas, aulas, disciplinas, professores, faculdade) -> calendários como 'UFSC', 'Faculdade', 'Estudos'.
+- Termos profissionais (reuniões, clientes, sprint, deploy) -> calendários como 'Trabalho', 'Work'.
+- Termos pessoais/domésticos (família, almoço, médico, compras) -> calendários como 'Home', 'Pessoal'.
+A chave 'targetCalendar' deve ser EXATAMENTE um dos nomes da lista, ou null caso não haja correspondência clara.`;
 
     const userPrompt = `Texto: "${cleanText}"`;
 
@@ -47,11 +59,18 @@ Data atual de referência: ${refDate} (${refDay}, fuso ${tz}).`;
         if (cleanJson) {
             const candidate = JSON.parse(cleanJson);
             if (candidate && candidate.title && candidate.date) {
+                let targetCal = candidate.targetCalendar || null;
+                if (targetCal && Array.isArray(availableCalendars) && availableCalendars.length > 0) {
+                    const found = availableCalendars.find(c => c.toLowerCase().trim() === String(targetCal).toLowerCase().trim());
+                    targetCal = found || null;
+                }
+
                 parsed = {
                     title: String(candidate.title).trim(),
                     date: String(candidate.date).trim(),
                     startTime: candidate.startTime || '09:00',
-                    endTime: candidate.endTime || '10:00'
+                    endTime: candidate.endTime || '10:00',
+                    targetCalendar: targetCal
                 };
             }
         }
@@ -60,17 +79,17 @@ Data atual de referência: ${refDate} (${refDay}, fuso ${tz}).`;
     }
 
     if (!parsed) {
-        parsed = fallbackHeuristicParse(cleanText, refDate);
+        parsed = fallbackHeuristicParse(cleanText, refDate, availableCalendars);
     }
 
     return parsed;
 }
 
 /**
- * Deterministic Portuguese heuristic parser for dates, times and event titles.
- * Guarantees zero-past projection and safe 1h duration.
+ * Deterministic Portuguese heuristic parser for dates, times, event titles and smart calendar routing.
+ * Guarantees zero-past projection, safe 1h duration, clean titles and semantic domain matching.
  */
-export function fallbackHeuristicParse(text, refDateStr) {
+export function fallbackHeuristicParse(text, refDateStr, availableCalendars = []) {
     const [y, m, d] = refDateStr.split('-').map(Number);
     const refDate = new Date(y, m - 1, d, 12, 0, 0);
     const lower = text.toLowerCase();
@@ -131,7 +150,7 @@ export function fallbackHeuristicParse(text, refDateStr) {
         }
     }
 
-    // 3. Extração do Título
+    // 3. Extração e Higienização Estrita do Título (Remove datas e horários)
     let cleanedTitle = text
         .replace(/(?:^|\s)(?:na|no)\s+(?:segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)(?:-feira)?(?:\s|$)/gi, ' ')
         .replace(/(?:^|\s)(?:segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)(?:-feira)?(?:\s|$)/gi, ' ')
@@ -146,11 +165,42 @@ export function fallbackHeuristicParse(text, refDateStr) {
 
     cleanedTitle = cleanedTitle.charAt(0).toUpperCase() + cleanedTitle.slice(1);
 
+    // 4. Roteamento Semântico de Calendário
+    let targetCalendar = null;
+    const cals = Array.isArray(availableCalendars) ? availableCalendars : [];
+
+    const findCalendar = (candidates) => {
+        for (const cand of candidates) {
+            const found = cals.find(c => c && c.toLowerCase().trim() === cand.toLowerCase().trim());
+            if (found) return found;
+        }
+        for (const cand of candidates) {
+            const found = cals.find(c => c && c.toLowerCase().trim().includes(cand.toLowerCase().trim()));
+            if (found) return found;
+        }
+        return null;
+    };
+
+    const academicKeywords = ['ufsc', 'aula', 'hélio', 'helio', 'prova', 'atividade', 'trabalho acadêmico', 'disciplina', 'professor', 'faculdade', 'universidade', 'estudo', 'estudos', 'seminario', 'seminário'];
+    const workKeywords = ['reuniao', 'reunião', 'meeting', 'call', 'cliente', 'sprint', 'deploy', 'alinhamento', 'trabalho', 'work', 'projeto', '1:1', 'one-on-one'];
+    const personalKeywords = ['almoço', 'almoco', 'jantar', 'médico', 'medico', 'consulta', 'dentista', 'academia', 'compras', 'família', 'familia', 'casa', 'aniversário', 'aniversario'];
+
+    const matchesAny = (keywords) => keywords.some(k => lower.includes(k));
+
+    if (matchesAny(academicKeywords)) {
+        targetCalendar = findCalendar(['UFSC', 'Faculdade', 'Estudos', 'Acadêmico', 'Universidade']) || (cals.includes('UFSC') ? 'UFSC' : null);
+    } else if (matchesAny(workKeywords)) {
+        targetCalendar = findCalendar(['Trabalho', 'Work', 'Profissional', 'Job']) || (cals.includes('Trabalho') ? 'Trabalho' : null);
+    } else if (matchesAny(personalKeywords)) {
+        targetCalendar = findCalendar(['Pessoal', 'Home', 'Família', 'Personal']) || (cals.includes('Pessoal') ? 'Pessoal' : null);
+    }
+
     return {
         title: cleanedTitle,
         date: resolvedDateStr,
         startTime,
-        endTime
+        endTime,
+        targetCalendar
     };
 }
 
