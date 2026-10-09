@@ -1,8 +1,32 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use chrono::Datelike;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State};
+
+/// Interactive bounding rectangle for passive hit-testing (CSS logical coordinates)
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct Retangulo {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// Global registry of interactive areas per window
+#[derive(Default)]
+pub struct EstadoAreas {
+    pub areas: Mutex<HashMap<String, Vec<Retangulo>>>,
+}
+
+/// IPC command to register measured interactive rects for a window
+#[tauri::command]
+fn area_interativa(janela: String, retangulos: Vec<Retangulo>, estado: tauri::State<EstadoAreas>) {
+    if let Ok(mut areas) = estado.areas.lock() {
+        areas.insert(janela, retangulos);
+    }
+}
 
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -20,23 +44,78 @@ pub enum DockPositionPreset {
     Custom,
 }
 
+/// Dock visual/window modes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockMode {
+    Notch,
+    Scoop,
+    Flyout,
+}
+
+impl DockMode {
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s.trim().to_lowercase().as_str() {
+            "notch" => Ok(Self::Notch),
+            "scoop" => Ok(Self::Scoop),
+            "flyout" => Ok(Self::Flyout),
+            other => Err(format!(
+                "invalid dock mode: '{other}'. Expected 'notch', 'scoop', or 'flyout'"
+            )),
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Notch => "notch",
+            Self::Scoop => "scoop",
+            Self::Flyout => "flyout",
+        }
+    }
+}
+
 /// Application state tracking active preset, expansion status, and dragging puck
 pub struct DockState {
     pub preset: Mutex<DockPositionPreset>,
+    pub mode: Mutex<DockMode>,
     pub is_expanded: Mutex<bool>,
     pub is_puck: Mutex<bool>,
     pub drag_seq: std::sync::atomic::AtomicU64,
+    pub mode_gen: std::sync::atomic::AtomicU64,
+    pub is_transitioning: std::sync::atomic::AtomicBool,
 }
 
 impl Default for DockState {
     fn default() -> Self {
         Self {
             preset: Mutex::new(DockPositionPreset::Right),
+            mode: Mutex::new(DockMode::Notch),
             is_expanded: Mutex::new(false),
             is_puck: Mutex::new(false),
             drag_seq: std::sync::atomic::AtomicU64::new(0),
+            mode_gen: std::sync::atomic::AtomicU64::new(0),
+            is_transitioning: std::sync::atomic::AtomicBool::new(false),
         }
     }
+}
+
+/// Pure helper to check if physical cursor coordinate (cx, cy) is inside physical rectangle [rx, ry, rw, rh]
+/// expanded by physical margin (e.g. 8.0 * scale_factor)
+pub fn is_cursor_in_physical_rect(
+    cx: f64,
+    cy: f64,
+    rx: f64,
+    ry: f64,
+    rw: f64,
+    rh: f64,
+    margin_px: f64,
+) -> bool {
+    let min_x = rx - margin_px;
+    let max_x = rx + rw + margin_px;
+    let min_y = ry - margin_px;
+    let max_y = ry + rh + margin_px;
+
+    cx >= min_x && cx <= max_x && cy >= min_y && cy <= max_y
 }
 
 /// Pure helper to compute magnetic snap preset given window position and monitor dimensions
@@ -66,6 +145,62 @@ pub fn compute_magnetic_snap_preset(
     DockPositionPreset::Custom
 }
 
+/// Pure helper to compute geometry (x, y, width, height) given dock mode and preset
+pub fn compute_dock_mode_geometry(
+    mode: DockMode,
+    preset: DockPositionPreset,
+    mon_x: f64,
+    mon_y: f64,
+    mon_width: f64,
+    mon_height: f64,
+) -> (f64, f64, f64, f64) {
+    match preset {
+        DockPositionPreset::Right => {
+            let (width, height) = match mode {
+                DockMode::Notch | DockMode::Scoop => (60.0, 300.0),
+                DockMode::Flyout => (420.0, 580.0),
+            };
+            let x = mon_x + mon_width - width;
+            let y = mon_y + (mon_height - height) / 2.0;
+            (x, y, width, height)
+        }
+        DockPositionPreset::Left => {
+            let (width, height) = match mode {
+                DockMode::Notch | DockMode::Scoop => (60.0, 300.0),
+                DockMode::Flyout => (420.0, 580.0),
+            };
+            let x = mon_x;
+            let y = mon_y + (mon_height - height) / 2.0;
+            (x, y, width, height)
+        }
+        DockPositionPreset::TopCenter => {
+            match mode {
+                DockMode::Flyout => {
+                    let width = 340.0;
+                    let height = 580.0;
+                    let x = mon_x + (mon_width - width) / 2.0;
+                    let y = mon_y + 40.0;
+                    (x, y, width, height)
+                }
+                DockMode::Notch | DockMode::Scoop => {
+                    let width = 260.0;
+                    let height = 44.0;
+                    let x = mon_x + (mon_width - width) / 2.0;
+                    let y = mon_y + 40.0;
+                    (x, y, width, height)
+                }
+            }
+        }
+        DockPositionPreset::Custom => {
+            let (width, height) = match mode {
+                DockMode::Notch | DockMode::Scoop => (60.0, 300.0),
+                DockMode::Flyout => (420.0, 580.0),
+            };
+            (mon_x, mon_y, width, height)
+        }
+    }
+}
+
 /// Pure helper to compute preset coordinates and dimensions given display geometry
 pub fn compute_preset_geometry(
     preset: DockPositionPreset,
@@ -75,42 +210,8 @@ pub fn compute_preset_geometry(
     mon_width: f64,
     mon_height: f64,
 ) -> (f64, f64, f64, f64) {
-    match preset {
-        DockPositionPreset::Right => {
-            let width = if expanded { 428.0 } else { 68.0 };
-            let height = 580.0;
-            let x = mon_x + mon_width - width;
-            let y = mon_y + (mon_height - height) / 2.0;
-            (x, y, width, height)
-        }
-        DockPositionPreset::Left => {
-            let width = if expanded { 428.0 } else { 68.0 };
-            let height = 580.0;
-            let x = mon_x;
-            let y = mon_y + (mon_height - height) / 2.0;
-            (x, y, width, height)
-        }
-        DockPositionPreset::TopCenter => {
-            if expanded {
-                let width = 340.0;
-                let height = 580.0;
-                let x = mon_x + (mon_width - width) / 2.0;
-                let y = mon_y + 40.0;
-                (x, y, width, height)
-            } else {
-                let width = 260.0; // Horizontal dock pill under notch
-                let height = 44.0;
-                let x = mon_x + (mon_width - width) / 2.0;
-                let y = mon_y + 40.0;
-                (x, y, width, height)
-            }
-        }
-        DockPositionPreset::Custom => {
-            let width = if expanded { 428.0 } else { 68.0 };
-            let height = 580.0;
-            (mon_x, mon_y, width, height)
-        }
-    }
+    let mode = if expanded { DockMode::Flyout } else { DockMode::Notch };
+    compute_dock_mode_geometry(mode, preset, mon_x, mon_y, mon_width, mon_height)
 }
 
 /// Pure helper to compute right-docked logical coordinates given monitor and window geometry
@@ -185,10 +286,337 @@ fn apply_dock_preset_geometry(
     Ok(())
 }
 
-/// Calculate physical coordinates through current_monitor() with exact Retina scale_factor
-/// and position the Sidebar glued flush against the right edge of the display
-fn position_sidebar_right(window: &tauri::WebviewWindow) -> Result<(), Box<dyn std::error::Error>> {
-    apply_dock_preset_geometry(window, DockPositionPreset::Right, false)
+
+
+struct TransitionGuard<'a>(&'a std::sync::atomic::AtomicBool);
+impl<'a> Drop for TransitionGuard<'a> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Dynamically apply dock mode geometry and update state
+pub fn apply_dock_mode(
+    app: &tauri::AppHandle,
+    state: &DockState,
+    target_mode: DockMode,
+) -> Result<(), String> {
+    // Acquire atomic transition lock. If window is already resizing, discard to eliminate thrashing
+    if state
+        .is_transitioning
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        )
+        .is_err()
+    {
+        return Ok(());
+    }
+    let _guard = TransitionGuard(&state.is_transitioning);
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+
+    let preset = *state.preset.lock().map_err(|e| e.to_string())?;
+    let current_mode = *state.mode.lock().map_err(|e| e.to_string())?;
+
+    // Refinement 2: Clean transition when closing Flyout:
+    // If target is Scoop (closing from Flyout), check if cursor is currently outside Scoop rect.
+    // If outside, transition directly to Notch, preventing Scoop from remaining stuck on the desktop!
+    let resolved_mode = if target_mode == DockMode::Scoop && current_mode == DockMode::Flyout {
+        let scale_factor = window.scale_factor().unwrap_or(1.0);
+        if let (Ok(cursor_phys), Ok(Some(monitor))) = (app.cursor_position(), window.current_monitor()) {
+            let mon_pos = monitor.position().to_logical::<f64>(scale_factor);
+            let mon_size = monitor.size().to_logical::<f64>(scale_factor);
+            let (sx, sy, sw, sh) = compute_dock_mode_geometry(
+                DockMode::Scoop,
+                preset,
+                mon_pos.x,
+                mon_pos.y,
+                mon_size.width,
+                mon_size.height,
+            );
+            let phys_rx = sx * scale_factor;
+            let phys_ry = sy * scale_factor;
+            let phys_rw = sw * scale_factor;
+            let phys_rh = sh * scale_factor;
+            let margin_phys = 30.0 * scale_factor;
+
+            if is_cursor_in_physical_rect(
+                cursor_phys.x,
+                cursor_phys.y,
+                phys_rx,
+                phys_ry,
+                phys_rw,
+                phys_rh,
+                margin_phys,
+            ) {
+                DockMode::Scoop
+            } else {
+                DockMode::Notch
+            }
+        } else {
+            DockMode::Notch
+        }
+    } else {
+        target_mode
+    };
+
+    // When switching between Notch and Scoop (dock-only modes), DO NOT resize Cocoa window!
+    // The window is permanently fixed at 60x300. Just update state and emit event.
+    let is_dock_only_transition = match (current_mode, resolved_mode) {
+        (DockMode::Notch, DockMode::Scoop) | (DockMode::Scoop, DockMode::Notch) => true,
+        _ => false,
+    };
+
+    if is_dock_only_transition {
+        {
+            let mut m = state.mode.lock().map_err(|e| e.to_string())?;
+            *m = resolved_mode;
+            let mut exp = state.is_expanded.lock().map_err(|e| e.to_string())?;
+            *exp = false;
+        }
+        state.mode_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _ = app.emit("dock-mode-changed", resolved_mode.as_str());
+        return Ok(());
+    }
+
+    if current_mode == resolved_mode && resolved_mode != DockMode::Flyout {
+        return Ok(());
+    }
+
+    let scale_factor = window
+        .scale_factor()
+        .map_err(|e| format!("failed to get scale factor: {e}"))?;
+
+    let monitor = window
+        .current_monitor()
+        .map_err(|e| format!("failed to get current monitor: {e}"))?
+        .ok_or_else(|| "no monitor detected for main window".to_string())?;
+
+    let mon_pos = monitor.position().to_logical::<f64>(scale_factor);
+    let mon_size = monitor.size().to_logical::<f64>(scale_factor);
+
+    let (target_x, target_y, target_width, target_height) = match preset {
+        DockPositionPreset::Right | DockPositionPreset::Left | DockPositionPreset::TopCenter => {
+            compute_dock_mode_geometry(
+                resolved_mode,
+                preset,
+                mon_pos.x,
+                mon_pos.y,
+                mon_size.width,
+                mon_size.height,
+            )
+        }
+        DockPositionPreset::Custom => {
+            let current_pos = window
+                .outer_position()
+                .map_err(|e| format!("failed to get position: {e}"))?
+                .to_logical::<f64>(scale_factor);
+            let current_size = window
+                .outer_size()
+                .map_err(|e| format!("failed to get size: {e}"))?
+                .to_logical::<f64>(scale_factor);
+
+            let win_center_x = current_pos.x + (current_size.width / 2.0);
+            let mon_center_x = mon_pos.x + (mon_size.width / 2.0);
+
+            let (target_w, target_h) = match resolved_mode {
+                DockMode::Notch | DockMode::Scoop => (60.0, 300.0),
+                DockMode::Flyout => (420.0, 580.0),
+            };
+
+            let raw_x = if win_center_x < mon_center_x {
+                current_pos.x
+            } else {
+                current_pos.x + current_size.width - target_w
+            };
+
+            let max_x = mon_pos.x + mon_size.width - target_w;
+            let clamped_x = raw_x.clamp(mon_pos.x, max_x);
+
+            let max_y = mon_pos.y + mon_size.height - target_h;
+            let clamped_y = current_pos.y.clamp(mon_pos.y, max_y);
+
+            (clamped_x, clamped_y, target_w, target_h)
+        }
+    };
+
+    let target_pos = tauri::Position::Logical(tauri::LogicalPosition::new(target_x, target_y));
+    let target_size = tauri::Size::Logical(tauri::LogicalSize::new(target_width, target_height));
+
+    let is_expanding = match (current_mode, resolved_mode) {
+        (DockMode::Notch, DockMode::Scoop)
+        | (DockMode::Notch, DockMode::Flyout)
+        | (DockMode::Scoop, DockMode::Flyout) => true,
+        _ => false,
+    };
+
+    if is_expanding {
+        window
+            .set_size(target_size)
+            .map_err(|e| format!("failed to set window size: {e}"))?;
+        window
+            .set_position(target_pos)
+            .map_err(|e| format!("failed to set window position: {e}"))?;
+    } else {
+        window
+            .set_position(target_pos)
+            .map_err(|e| format!("failed to set window position: {e}"))?;
+        window
+            .set_size(target_size)
+            .map_err(|e| format!("failed to set window size: {e}"))?;
+    }
+
+    {
+        let mut m = state.mode.lock().map_err(|e| e.to_string())?;
+        *m = resolved_mode;
+        let mut exp = state.is_expanded.lock().map_err(|e| e.to_string())?;
+        *exp = resolved_mode == DockMode::Flyout;
+    }
+    state.mode_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    let _ = app.emit("dock-mode-changed", resolved_mode.as_str());
+
+    Ok(())
+}
+
+/// Dedicated OS cursor polling loop (45ms) for passive hit-testing and ignore_cursor_events toggling.
+/// When cursor is inside any registered interactive rect (with 4px tolerance): window receives cursor events.
+/// When cursor is outside all rects: window ignores cursor events (passes clicks straight to desktop)
+/// and emits 'cortex://cursor-fora' to safely collapse hovers.
+fn vigiar_cursor(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let mut fora: HashMap<String, bool> = HashMap::new();
+        loop {
+            std::thread::sleep(Duration::from_millis(45));
+
+            let areas = match app.try_state::<EstadoAreas>() {
+                Some(state) => match state.areas.lock() {
+                    Ok(a) => a.clone(),
+                    Err(_) => continue,
+                },
+                None => continue,
+            };
+
+            let sobrepostas: Vec<(String, tauri::WebviewWindow)> = app
+                .webview_windows()
+                .into_iter()
+                .filter(|(r, _)| r == "main")
+                .collect();
+
+            fora.retain(|r, _| sobrepostas.iter().any(|(s, _)| s == r));
+
+            for (rotulo, janela) in &sobrepostas {
+                let is_puck = {
+                    if let Some(dock_state) = app.try_state::<DockState>() {
+                        dock_state.is_puck.lock().map(|p| *p).unwrap_or(false)
+                    } else {
+                        false
+                    }
+                };
+
+                if is_puck {
+                    let estava_fora = *fora.get(rotulo).unwrap_or(&false);
+                    if estava_fora {
+                        let _ = janela.set_ignore_cursor_events(false);
+                        fora.insert(rotulo.clone(), false);
+                    }
+                    continue;
+                }
+
+                let (Ok(cursor), Ok(origem), Ok(escala)) = (
+                    janela.cursor_position(),
+                    janela.outer_position(),
+                    janela.scale_factor(),
+                ) else {
+                    continue;
+                };
+
+                let tamanho = janela.outer_size().unwrap_or(tauri::PhysicalSize::new(0, 0));
+                let largura_janela = tamanho.width as f64 / escala;
+                let altura_janela = tamanho.height as f64 / escala;
+
+                let x = (cursor.x - origem.x as f64) / escala;
+                let y = (cursor.y - origem.y as f64) / escala;
+
+                // Regra de Ancoragem Rígida na Borda (Edge Trigger):
+                // Se o cursor estiver nos últimos 12px da margem direita do monitor ou da janela:
+                // cursor.x >= (origem.x + (largura_janela * escala)) - (12.0 * escala)
+                let borda_direita_janela = (origem.x as f64 + (largura_janela * escala)) - (12.0 * escala);
+                let borda_direita_monitor = janela
+                    .current_monitor()
+                    .ok()
+                    .flatten()
+                    .map(|m| (m.position().x as f64 + m.size().width as f64) - (12.0 * escala));
+
+                let na_faixa_altura = cursor.y >= origem.y as f64
+                    && cursor.y <= (origem.y as f64 + (altura_janela * escala));
+
+                let na_borda_direita = na_faixa_altura
+                    && (cursor.x >= borda_direita_janela
+                        || borda_direita_monitor.map_or(false, |bm| cursor.x >= bm));
+
+                let retangulo_hit = areas
+                    .get(rotulo)
+                    .map(|lista| {
+                        lista.iter().any(|r| {
+                            x >= r.x - 16.0
+                                && x <= r.x + r.w + 16.0
+                                && y >= r.y - 4.0
+                                && y <= r.y + r.h + 4.0
+                        })
+                    })
+                    .unwrap_or(false);
+
+                let dentro = retangulo_hit || na_borda_direita;
+
+                let estava_fora = *fora.get(rotulo).unwrap_or(&false);
+                let agora_fora = !dentro;
+
+                if !fora.contains_key(rotulo) || estava_fora != agora_fora {
+                    let _ = janela.set_ignore_cursor_events(agora_fora);
+                    if agora_fora {
+                        let _ = janela.emit_to(rotulo.as_str(), "cortex://cursor-fora", ());
+                    } else {
+                        // Ao detectar entrada (dentro == true), desbloqueia e emite dock-mode-changed("scoop")
+                        let is_flyout = {
+                            if let Some(dock_state) = app.try_state::<DockState>() {
+                                dock_state
+                                    .mode
+                                    .lock()
+                                    .map(|m| *m == DockMode::Flyout)
+                                    .unwrap_or(false)
+                            } else {
+                                false
+                            }
+                        };
+                        if !is_flyout {
+                            let _ = janela.emit_to(rotulo.as_str(), "dock-mode-changed", "scoop");
+                            let _ = app.emit("dock-mode-changed", "scoop");
+                        }
+                    }
+                    fora.insert(rotulo.clone(), agora_fora);
+                }
+            }
+        }
+    });
+}
+
+/// Explicitly resize the dock window to a target mode (notch, scoop, flyout)
+#[tauri::command]
+fn resize_dock_window(
+    app: tauri::AppHandle,
+    mode: String,
+    state: State<'_, DockState>,
+) -> Result<String, String> {
+    let parsed_mode = DockMode::parse(&mode)?;
+    apply_dock_mode(&app, &state, parsed_mode)?;
+    let final_mode = *state.mode.lock().map_err(|e| e.to_string())?;
+    Ok(final_mode.as_str().to_string())
 }
 
 /// Toggle the visibility of the Lateral Sidebar from frontend (e.g. TrayPopover button)
@@ -200,11 +628,8 @@ fn toggle_sidebar(app: tauri::AppHandle, state: State<'_, DockState>) -> Result<
             window.hide().map_err(|e| e.to_string())?;
             Ok(false)
         } else {
-            let preset = *state.preset.lock().map_err(|e| e.to_string())?;
-            let expanded = *state.is_expanded.lock().map_err(|e| e.to_string())?;
-            if preset != DockPositionPreset::Custom {
-                let _ = apply_dock_preset_geometry(&window, preset, expanded);
-            }
+            let mode = *state.mode.lock().map_err(|e| e.to_string())?;
+            let _ = apply_dock_mode(&app, &state, mode);
             window.show().map_err(|e| e.to_string())?;
             window.set_focus().map_err(|e| e.to_string())?;
             Ok(true)
@@ -237,7 +662,7 @@ fn set_dock_preset(
     preset: DockPositionPreset,
     state: State<'_, DockState>,
 ) -> Result<(), String> {
-    let window = app
+    let _window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
 
@@ -246,11 +671,26 @@ fn set_dock_preset(
         *p = preset;
     }
 
-    let expanded = *state.is_expanded.lock().map_err(|e| e.to_string())?;
+    let mode = *state.mode.lock().map_err(|e| e.to_string())?;
 
     if preset != DockPositionPreset::Custom {
-        apply_dock_preset_geometry(&window, preset, expanded)
-            .map_err(|e| format!("failed to position window: {e}"))?;
+        if let Some(window) = app.get_webview_window("main") {
+            let scale_factor = window.scale_factor().map_err(|e| e.to_string())?;
+            if let Ok(Some(monitor)) = window.current_monitor() {
+                let mon_pos = monitor.position().to_logical::<f64>(scale_factor);
+                let mon_size = monitor.size().to_logical::<f64>(scale_factor);
+                let (x, y, w, h) = compute_dock_mode_geometry(
+                    mode,
+                    preset,
+                    mon_pos.x,
+                    mon_pos.y,
+                    mon_size.width,
+                    mon_size.height,
+                );
+                let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
+                let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
+            }
+        }
     }
 
     // Broadcast change to all windows so React layout adapts instantly
@@ -285,102 +725,18 @@ fn get_dock_preset(state: State<'_, DockState>) -> Result<DockPositionPreset, St
 }
 
 /// Dynamically resize and reposition the Sidebar window with preset and bounds intelligence:
-/// - Right: Expands leftwards (width 376 vs 56)
-/// - Left: Expands rightwards (width 376 vs 56, x anchored to left)
-/// - TopCenter: Expands downwards (width 340, height 580 vs width 56, height 240)
-/// - Custom: Checks screen half to decide expansion direction with safe monitor clamping
 #[tauri::command]
 fn set_sidebar_expanded(
     app: tauri::AppHandle,
     expanded: bool,
     state: State<'_, DockState>,
 ) -> Result<(), String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "main window not found".to_string())?;
-
-    let preset = *state.preset.lock().map_err(|e| e.to_string())?;
-    {
-        let mut exp = state.is_expanded.lock().map_err(|e| e.to_string())?;
-        *exp = expanded;
-    }
-
-    let scale_factor = window
-        .scale_factor()
-        .map_err(|e| format!("failed to get scale factor: {e}"))?;
-
-    let monitor = window
-        .current_monitor()
-        .map_err(|e| format!("failed to get current monitor: {e}"))?
-        .ok_or_else(|| "no monitor detected for main window".to_string())?;
-
-    let mon_pos = monitor.position().to_logical::<f64>(scale_factor);
-    let mon_size = monitor.size().to_logical::<f64>(scale_factor);
-
-    let (target_x, target_y, target_width, target_height) = match preset {
-        DockPositionPreset::Right | DockPositionPreset::Left | DockPositionPreset::TopCenter => {
-            compute_preset_geometry(preset, expanded, mon_pos.x, mon_pos.y, mon_size.width, mon_size.height)
-        }
-        DockPositionPreset::Custom => {
-            let current_pos = window
-                .outer_position()
-                .map_err(|e| format!("failed to get position: {e}"))?
-                .to_logical::<f64>(scale_factor);
-            let current_size = window
-                .outer_size()
-                .map_err(|e| format!("failed to get size: {e}"))?
-                .to_logical::<f64>(scale_factor);
-
-            let win_center_x = current_pos.x + (current_size.width / 2.0);
-            let mon_center_x = mon_pos.x + (mon_size.width / 2.0);
-
-            let target_w = if expanded { 428.0 } else { 68.0 };
-            let target_h = 580.0;
-
-            let raw_x = if win_center_x < mon_center_x {
-                // Window is on left half: expand to the right
-                current_pos.x
-            } else {
-                // Window is on right half: expand to the left
-                if expanded {
-                    current_pos.x - (428.0 - 68.0)
-                } else {
-                    current_pos.x + (428.0 - 68.0)
-                }
-            };
-
-            // Clamp x within monitor bounds
-            let max_x = mon_pos.x + mon_size.width - target_w;
-            let clamped_x = raw_x.clamp(mon_pos.x, max_x);
-
-            // Clamp y within monitor bounds
-            let max_y = mon_pos.y + mon_size.height - target_h;
-            let clamped_y = current_pos.y.clamp(mon_pos.y, max_y);
-
-            (clamped_x, clamped_y, target_w, target_h)
-        }
-    };
-
-    let target_pos = tauri::Position::Logical(tauri::LogicalPosition::new(target_x, target_y));
-    let target_size = tauri::Size::Logical(tauri::LogicalSize::new(target_width, target_height));
-
-    if expanded {
-        window
-            .set_size(target_size)
-            .map_err(|e| format!("failed to set window size: {e}"))?;
-        window
-            .set_position(target_pos)
-            .map_err(|e| format!("failed to set window position: {e}"))?;
+    let target = if expanded {
+        DockMode::Flyout
     } else {
-        window
-            .set_position(target_pos)
-            .map_err(|e| format!("failed to set window position: {e}"))?;
-        window
-            .set_size(target_size)
-            .map_err(|e| format!("failed to set window size: {e}"))?;
-    }
-
-    Ok(())
+        DockMode::Scoop
+    };
+    apply_dock_mode(&app, &state, target)
 }
 
 /// Helper to resolve magnetic snap on mouse release or debounce timeout
@@ -1145,12 +1501,14 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(DockState::default())
+        .manage(EstadoAreas::default())
         .invoke_handler(tauri::generate_handler![
             greet,
             toggle_sidebar,
             is_sidebar_visible,
             exit_app,
             set_sidebar_expanded,
+            resize_dock_window,
             set_dock_preset,
             set_dock_preset_custom,
             get_dock_preset,
@@ -1159,13 +1517,56 @@ pub fn run() {
             get_apple_calendars,
             create_apple_calendar_event,
             delete_apple_calendar_event,
-            get_apple_calendar_events
+            get_apple_calendar_events,
+            area_interativa
         ])
         .setup(move |app| {
-            // Position the main Sidebar flush on the right edge on launch
+            // Position the main Sidebar flush on the right edge on launch in 60x300 container
             if let Some(main_win) = app.get_webview_window("main") {
-                let _ = position_sidebar_right(&main_win);
+                let state = app.state::<DockState>();
+                let scale_factor = main_win.scale_factor().unwrap_or(1.0);
+                if let Ok(Some(monitor)) = main_win.current_monitor() {
+                    let mon_pos = monitor.position().to_logical::<f64>(scale_factor);
+                    let mon_size = monitor.size().to_logical::<f64>(scale_factor);
+                    let preset = match state.preset.lock() {
+                        Ok(p) => *p,
+                        Err(_) => DockPositionPreset::Right,
+                    };
+                    let (x, y, w, h) = compute_dock_mode_geometry(
+                        DockMode::Notch,
+                        preset,
+                        mon_pos.x,
+                        mon_pos.y,
+                        mon_size.width,
+                        mon_size.height,
+                    );
+                    let _ = main_win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
+                    let _ = main_win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = main_win.set_visible_on_all_workspaces(true);
+                }
+                let _ = main_win.set_ignore_cursor_events(true);
             }
+
+            // Fallback de Inicialização: Impede que a janela inicie "cega" antes do primeiro ciclo React
+            if let Some(estado_areas) = app.try_state::<EstadoAreas>() {
+                if let Ok(mut areas) = estado_areas.areas.lock() {
+                    areas.insert(
+                        "main".to_string(),
+                        vec![Retangulo {
+                            x: 32.0,
+                            y: 70.0,
+                            w: 28.0,
+                            h: 160.0,
+                        }],
+                    );
+                }
+            }
+
+            // Start cursor hit-testing monitor in background for zero ghost clicks
+            vigiar_cursor(app.handle().clone());
 
             // Load monochrome tray template icon with transparent background
             let icon_bytes = include_bytes!("../icons/tray-template.png");
@@ -1310,17 +1711,17 @@ mod tests {
 
     #[test]
     fn test_sidebar_collapsed_dock_positioning() {
-        // Collapsed state: width = 68.0 on 1512x982 display
-        let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 68.0, 580.0);
-        assert_eq!(x, 1444.0); // 1512 - 68 = 1444 (exact right-dock)
-        assert_eq!(y, 201.0);  // (982 - 580) / 2 = 201
+        // Collapsed state: width = 60.0, height = 300.0 on 1512x982 display
+        let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 60.0, 300.0);
+        assert_eq!(x, 1452.0); // 1512 - 60 = 1452 (exact right-dock)
+        assert_eq!(y, 341.0);  // (982 - 300) / 2 = 341
     }
 
     #[test]
     fn test_sidebar_expanded_dock_positioning() {
-        // Expanded state: width = 428.0 (68px dock + 320px flyout + 40px margin) on 1512x982 display
-        let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 428.0, 580.0);
-        assert_eq!(x, 1084.0); // 1512 - 428 = 1084
+        // Expanded state: width = 420.0, height = 580.0 on 1512x982 display
+        let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 420.0, 580.0);
+        assert_eq!(x, 1092.0); // 1512 - 420 = 1092
         assert_eq!(y, 201.0);  // (982 - 580) / 2 = 201
     }
 
@@ -1351,19 +1752,109 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_preset_geometry_right() {
-        // Collapsed (68px)
-        let (x, y, w, h) = compute_preset_geometry(DockPositionPreset::Right, false, 0.0, 0.0, 1512.0, 982.0);
-        assert_eq!(x, 1444.0);
-        assert_eq!(y, 201.0);
-        assert_eq!(w, 68.0);
-        assert_eq!(h, 580.0);
+    fn test_dock_mode_parse_valid() {
+        assert_eq!(DockMode::parse("notch").unwrap(), DockMode::Notch);
+        assert_eq!(DockMode::parse("NOTCH").unwrap(), DockMode::Notch);
+        assert_eq!(DockMode::parse("scoop").unwrap(), DockMode::Scoop);
+        assert_eq!(DockMode::parse("Scoop").unwrap(), DockMode::Scoop);
+        assert_eq!(DockMode::parse("flyout").unwrap(), DockMode::Flyout);
+        assert_eq!(DockMode::parse("FLYOUT").unwrap(), DockMode::Flyout);
+    }
 
-        // Expanded (428px)
-        let (x, y, w, h) = compute_preset_geometry(DockPositionPreset::Right, true, 0.0, 0.0, 1512.0, 982.0);
-        assert_eq!(x, 1084.0);
+    #[test]
+    fn test_dock_mode_parse_invalid() {
+        assert!(DockMode::parse("invalid").is_err());
+        assert!(DockMode::parse("").is_err());
+    }
+
+    #[test]
+    fn test_compute_dock_mode_geometry_right() {
+        // Notch (60x300, identical to Scoop to prevent Cocoa window resize on hover)
+        let (x, y, w, h) = compute_dock_mode_geometry(DockMode::Notch, DockPositionPreset::Right, 0.0, 0.0, 1512.0, 982.0);
+        assert_eq!(x, 1452.0);
+        assert_eq!(y, 341.0);
+        assert_eq!(w, 60.0);
+        assert_eq!(h, 300.0);
+
+        // Scoop
+        let (x, y, w, h) = compute_dock_mode_geometry(DockMode::Scoop, DockPositionPreset::Right, 0.0, 0.0, 1512.0, 982.0);
+        assert_eq!(x, 1452.0);
+        assert_eq!(y, 341.0);
+        assert_eq!(w, 60.0);
+        assert_eq!(h, 300.0);
+
+        // Flyout
+        let (x, y, w, h) = compute_dock_mode_geometry(DockMode::Flyout, DockPositionPreset::Right, 0.0, 0.0, 1512.0, 982.0);
+        assert_eq!(x, 1092.0);
         assert_eq!(y, 201.0);
-        assert_eq!(w, 428.0);
+        assert_eq!(w, 420.0);
+        assert_eq!(h, 580.0);
+    }
+
+    #[test]
+    fn test_compute_dock_mode_geometry_left() {
+        // Notch
+        let (x, y, w, h) = compute_dock_mode_geometry(DockMode::Notch, DockPositionPreset::Left, 0.0, 0.0, 1512.0, 982.0);
+        assert_eq!(x, 0.0);
+        assert_eq!(y, 341.0);
+        assert_eq!(w, 60.0);
+        assert_eq!(h, 300.0);
+
+        // Scoop
+        let (x, y, w, h) = compute_dock_mode_geometry(DockMode::Scoop, DockPositionPreset::Left, 0.0, 0.0, 1512.0, 982.0);
+        assert_eq!(x, 0.0);
+        assert_eq!(y, 341.0);
+        assert_eq!(w, 60.0);
+        assert_eq!(h, 300.0);
+
+        // Flyout
+        let (x, y, w, h) = compute_dock_mode_geometry(DockMode::Flyout, DockPositionPreset::Left, 0.0, 0.0, 1512.0, 982.0);
+        assert_eq!(x, 0.0);
+        assert_eq!(y, 201.0);
+        assert_eq!(w, 420.0);
+        assert_eq!(h, 580.0);
+    }
+
+    #[test]
+    fn test_compute_dock_mode_geometry_multi_monitor() {
+        let (x, y, w, h) = compute_dock_mode_geometry(DockMode::Notch, DockPositionPreset::Right, 1512.0, 0.0, 1920.0, 1080.0);
+        assert_eq!(x, 3372.0); // 1512 + 1920 - 60 = 3372
+        assert_eq!(y, 390.0);  // (1080 - 300) / 2 = 390
+        assert_eq!(w, 60.0);
+        assert_eq!(h, 300.0);
+
+        let (x, y, w, h) = compute_dock_mode_geometry(DockMode::Scoop, DockPositionPreset::Right, 1512.0, 0.0, 1920.0, 1080.0);
+        assert_eq!(x, 3372.0); // 1512 + 1920 - 60 = 3372
+        assert_eq!(y, 390.0);  // (1080 - 300) / 2 = 390
+        assert_eq!(w, 60.0);
+        assert_eq!(h, 300.0);
+    }
+
+    #[test]
+    fn test_is_cursor_in_physical_rect() {
+        // [100, 200, 50, 80]
+        assert!(is_cursor_in_physical_rect(125.0, 240.0, 100.0, 200.0, 50.0, 80.0, 0.0));
+        assert!(is_cursor_in_physical_rect(100.0, 200.0, 100.0, 200.0, 50.0, 80.0, 0.0));
+        assert!(!is_cursor_in_physical_rect(99.0, 240.0, 100.0, 200.0, 50.0, 80.0, 0.0));
+        // with margin 10.0
+        assert!(is_cursor_in_physical_rect(95.0, 240.0, 100.0, 200.0, 50.0, 80.0, 10.0));
+        assert!(!is_cursor_in_physical_rect(89.0, 240.0, 100.0, 200.0, 50.0, 80.0, 10.0));
+    }
+
+    #[test]
+    fn test_compute_preset_geometry_right() {
+        // Collapsed (60px x 300px)
+        let (x, y, w, h) = compute_preset_geometry(DockPositionPreset::Right, false, 0.0, 0.0, 1512.0, 982.0);
+        assert_eq!(x, 1452.0);
+        assert_eq!(y, 341.0);
+        assert_eq!(w, 60.0);
+        assert_eq!(h, 300.0);
+
+        // Expanded (420px x 580px)
+        let (x, y, w, h) = compute_preset_geometry(DockPositionPreset::Right, true, 0.0, 0.0, 1512.0, 982.0);
+        assert_eq!(x, 1092.0);
+        assert_eq!(y, 201.0);
+        assert_eq!(w, 420.0);
         assert_eq!(h, 580.0);
     }
 
@@ -1372,15 +1863,15 @@ mod tests {
         // Collapsed
         let (x, y, w, h) = compute_preset_geometry(DockPositionPreset::Left, false, 0.0, 0.0, 1512.0, 982.0);
         assert_eq!(x, 0.0);
-        assert_eq!(y, 201.0);
-        assert_eq!(w, 68.0);
-        assert_eq!(h, 580.0);
+        assert_eq!(y, 341.0);
+        assert_eq!(w, 60.0);
+        assert_eq!(h, 300.0);
 
         // Expanded
         let (x, y, w, h) = compute_preset_geometry(DockPositionPreset::Left, true, 0.0, 0.0, 1512.0, 982.0);
         assert_eq!(x, 0.0);
         assert_eq!(y, 201.0);
-        assert_eq!(w, 428.0);
+        assert_eq!(w, 420.0);
         assert_eq!(h, 580.0);
     }
 
@@ -1461,5 +1952,66 @@ mod tests {
         assert_eq!(d, 18); // Must stay on the 18th
         assert_eq!(h, 22);
         assert_eq!(min, 30);
+    }
+
+    #[test]
+    fn test_transition_guard_atomic_flag() {
+        let flag = std::sync::atomic::AtomicBool::new(false);
+        {
+            assert_eq!(flag.load(std::sync::atomic::Ordering::SeqCst), false);
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _guard = TransitionGuard(&flag);
+            assert_eq!(flag.load(std::sync::atomic::Ordering::SeqCst), true);
+        }
+        // After guard drops, flag must be restored to false
+        assert_eq!(flag.load(std::sync::atomic::Ordering::SeqCst), false);
+    }
+
+    #[test]
+    fn test_retangulo_hit_test_tolerance() {
+        let r = Retangulo { x: 10.0, y: 20.0, w: 100.0, h: 50.0 };
+        // Directly inside
+        let x_in = 50.0;
+        let y_in = 40.0;
+        assert!(x_in >= r.x - 16.0 && x_in <= r.x + r.w + 16.0 && y_in >= r.y - 4.0 && y_in <= r.y + r.h + 4.0);
+
+        // Edge with 16px tolerance on X and 4px on Y
+        let x_edge = -6.0; // r.x - 16.0
+        let y_edge = 16.0; // r.y - 4.0
+        assert!(x_edge >= r.x - 16.0 && x_edge <= r.x + r.w + 16.0 && y_edge >= r.y - 4.0 && y_edge <= r.y + r.h + 4.0);
+
+        // Outside tolerance
+        let x_out = -7.0;
+        assert!(!(x_out >= r.x - 16.0 && x_out <= r.x + r.w + 16.0));
+    }
+
+    #[test]
+    fn test_edge_trigger_deterministic() {
+        let origem_x = 1200.0;
+        let largura_janela = 60.0;
+        let escala = 2.0;
+        let threshold = (origem_x + (largura_janela * escala)) - (12.0 * escala); // 1200 + 120 - 24 = 1296.0
+
+        // Right at the 12px edge
+        let cursor_edge = 1298.0;
+        assert!(cursor_edge >= threshold);
+
+        // Inside window but outside the 12px right margin
+        let cursor_inside = 1290.0;
+        assert!(!(cursor_inside >= threshold));
+    }
+
+    #[test]
+    fn test_estado_areas_registration() {
+        let estado = EstadoAreas::default();
+        let rects = vec![
+            Retangulo { x: 0.0, y: 0.0, w: 60.0, h: 200.0 },
+            Retangulo { x: 10.0, y: 220.0, w: 40.0, h: 40.0 },
+        ];
+        if let Ok(mut areas) = estado.areas.lock() {
+            areas.insert("main".to_string(), rects.clone());
+        }
+        let areas = estado.areas.lock().unwrap();
+        assert_eq!(areas.get("main").unwrap().len(), 2);
     }
 }

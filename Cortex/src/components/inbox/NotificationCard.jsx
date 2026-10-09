@@ -113,10 +113,10 @@ export function NotificationCard({
     <div
       onClick={onClick}
       className={cn(
-        "card-surface rounded-xl p-2.5 flex flex-col gap-1.5 cursor-pointer transition-all duration-150 relative select-none",
+        "cartao cartao-clicavel rounded-[16px] p-3 flex flex-col gap-1.5 relative select-none",
         isSelected
-          ? "border-blue-500/40 bg-white/[0.08] shadow-[inset_0_1px_0_0_rgba(59,130,246,0.2)]"
-          : "border-white/10 hover:border-white/20 hover:bg-white/[0.06]"
+          ? "border-[var(--destaque)] bg-[var(--superficie-2)] shadow-[inset_0_1px_1px_0_rgba(167,139,250,0.3),0_8px_24px_rgba(0,0,0,0.4)] ring-1 ring-[var(--destaque)]/40"
+          : "hover:border-[var(--borda-forte)]"
       )}
     >
       {/* Header: Avatar, Remetente, Serviço e Timestamp */}
@@ -139,24 +139,24 @@ export function NotificationCard({
 
           <div className="min-w-0 flex flex-col">
             <div className="flex items-center gap-1.5">
-              <span className="text-[12px] font-semibold text-white/95 truncate">
+              <span className="text-[12px] font-semibold text-[var(--texto)] truncate">
                 {displayName}
               </span>
               <ServiceIcon service={service} />
             </div>
-            <span className="text-[11px] font-medium text-white/80 truncate">
+            <span className="text-[11px] font-medium text-[var(--texto-2)] truncate">
               {subject}
             </span>
           </div>
         </div>
 
-        <span className="text-[10px] text-white/40 font-mono shrink-0 whitespace-nowrap">
+        <span className="text-[10px] text-[var(--texto-3)] font-mono shrink-0 whitespace-nowrap">
           {formattedTime}
         </span>
       </div>
 
       {/* Snippet de Texto Seguro (Anti-XSS: Zero dangerouslySetInnerHTML) */}
-      <p className="text-[10.5px] text-white/60 line-clamp-2 leading-relaxed pl-8">
+      <p className="text-[11px] text-[var(--texto-2)] line-clamp-2 leading-relaxed pl-8">
         {snippet}
       </p>
 

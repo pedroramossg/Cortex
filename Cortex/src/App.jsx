@@ -18,9 +18,9 @@ function App() {
   const isPuckRef = useRef(isPuck);
   isPuckRef.current = isPuck;
 
-  // Garante que o estado inicial nativo seja colapsado (56px) e sincroniza preset
+  // Garante que o estado inicial nativo seja colapsado (28x148) e sincroniza preset
   useEffect(() => {
-    invoke("set_sidebar_expanded", { expanded: false }).catch(() => {});
+    invoke("resize_dock_window", { mode: "notch" }).catch(() => {});
     invoke("get_dock_preset")
       .then((p) => {
         if (p) setDockPreset(p);
@@ -69,7 +69,7 @@ function App() {
     setActiveTab(tab);
     if (!isFlyoutOpen) {
       try {
-        await invoke("set_sidebar_expanded", { expanded: true });
+        await invoke("resize_dock_window", { mode: "flyout" });
       } catch (err) {
         console.error("Falha ao expandir janela da Sidebar:", err);
       }
@@ -80,7 +80,7 @@ function App() {
   const handleToggleFlyout = useCallback(async () => {
     if (!isFlyoutOpen) {
       try {
-        await invoke("set_sidebar_expanded", { expanded: true });
+        await invoke("resize_dock_window", { mode: "flyout" });
       } catch (err) {
         console.error("Falha ao expandir janela da Sidebar:", err);
       }
@@ -93,7 +93,7 @@ function App() {
   const handleExitComplete = useCallback(async () => {
     if (!isFlyoutOpenRef.current) {
       try {
-        await invoke("set_sidebar_expanded", { expanded: false });
+        await invoke("resize_dock_window", { mode: "notch" });
       } catch (err) {
         console.error("Falha ao colapsar janela da Sidebar:", err);
       }
@@ -103,12 +103,12 @@ function App() {
   // Determina direção e classes do Flyout conforme o preset ativo
   const isLeftHalf = typeof window !== "undefined" && (window.screenX || 0) < (window.screen?.availWidth || 1920) / 2;
 
-  let flyoutPositionClass = "fixed right-[68px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+  let flyoutPositionClass = "fixed right-[60px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
   let flyoutInitialAnim = { opacity: 0, x: 20, scale: 0.98 };
   let flyoutExitAnim = { opacity: 0, x: 16, scale: 0.98 };
 
   if (dockPreset === "Left") {
-    flyoutPositionClass = "fixed left-[68px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+    flyoutPositionClass = "fixed left-[60px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
     flyoutInitialAnim = { opacity: 0, x: -20, scale: 0.98 };
     flyoutExitAnim = { opacity: 0, x: -16, scale: 0.98 };
   } else if (dockPreset === "TopCenter") {
@@ -117,18 +117,18 @@ function App() {
     flyoutExitAnim = { opacity: 0, y: -16, scale: 0.98 };
   } else if (dockPreset === "Custom") {
     if (isLeftHalf) {
-      flyoutPositionClass = "fixed left-[68px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+      flyoutPositionClass = "fixed left-[60px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
       flyoutInitialAnim = { opacity: 0, x: -20, scale: 0.98 };
       flyoutExitAnim = { opacity: 0, x: -16, scale: 0.98 };
     } else {
-      flyoutPositionClass = "fixed right-[68px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+      flyoutPositionClass = "fixed right-[60px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
       flyoutInitialAnim = { opacity: 0, x: 20, scale: 0.98 };
       flyoutExitAnim = { opacity: 0, x: 16, scale: 0.98 };
     }
   }
 
   return (
-    <div className="relative min-h-screen w-full bg-transparent overflow-hidden text-white select-none pointer-events-none">
+    <div className="relative min-h-screen w-full bg-transparent border-none outline-none shadow-none overflow-hidden text-white select-none pointer-events-none">
       {/* Lateral Dock Flutuante Ancorada conforme preset */}
       <DockRail
         activeTab={activeTab}
@@ -145,23 +145,24 @@ function App() {
         {isFlyoutOpen && !isPuck && (
           <motion.aside
             key={`cortex-flyout-${dockPreset}`}
+            data-cortex-interactive="true"
             initial={flyoutInitialAnim}
             animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
             exit={flyoutExitAnim}
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             aria-label="Cortex Flyout Panel"
-            className={`mac-vibrancy rounded-2xl flex flex-col p-3 shadow-2xl z-40 pointer-events-auto ${flyoutPositionClass}`}
+            className={`mac-vibrancy cartao rounded-[16px] flex flex-col p-3 shadow-2xl z-40 pointer-events-auto ${flyoutPositionClass}`}
           >
             {/* Header do Flyout */}
-            <div className="flex items-center justify-between pb-2.5 border-b border-white/10 shrink-0">
+            <div className="flex items-center justify-between pb-2.5 border-b border-[var(--borda)] shrink-0">
               <div>
-                <h2 className="text-[13px] font-semibold text-white tracking-tight">
+                <h2 className="text-[13px] font-semibold text-[var(--texto)] tracking-tight">
                   {activeTab === "inbox" && "Inbox & Prioridades"}
                   {activeTab === "calendar" && "Calendário & Reuniões"}
                   {activeTab === "obsidian" && "Notas Obsidian"}
                   {activeTab === "settings" && "Configurações"}
                 </h2>
-                <p className="text-[11px] text-white/50">Cortex Intelligent Workspace</p>
+                <p className="rotulo-secao mt-0.5">Cortex Intelligent Workspace</p>
               </div>
             </div>
 
@@ -172,24 +173,24 @@ function App() {
               {activeTab === "calendar" && <CalendarTimeline />}
 
               {activeTab === "obsidian" && (
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-4 gap-2 h-full text-white/60">
-                  <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center text-purple-400">
+                <div className="cartao rounded-[16px] p-5 flex flex-col items-center justify-center text-center gap-2.5 h-full text-[var(--texto-2)]">
+                  <div className="w-10 h-10 rounded-[12px] bg-[var(--superficie-2)] border border-[var(--borda-forte)] flex items-center justify-center text-purple-400 shadow-sm text-base">
                     📝
                   </div>
-                  <h3 className="text-xs font-semibold text-white">Obsidian Local Vault</h3>
-                  <p className="text-[11px] text-white/50">
+                  <h3 className="text-xs font-semibold text-[var(--texto)]">Obsidian Local Vault</h3>
+                  <p className="text-[11px] text-[var(--texto-2)] max-w-[260px] leading-relaxed">
                     Notas rápidas e briefings salvos diretamente no formato Markdown com frontmatter.
                   </p>
                 </div>
               )}
 
               {activeTab === "settings" && (
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-4 gap-2 h-full text-white/60">
-                  <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-center text-white/70">
+                <div className="cartao rounded-[16px] p-5 flex flex-col items-center justify-center text-center gap-2.5 h-full text-[var(--texto-2)]">
+                  <div className="w-10 h-10 rounded-[12px] bg-[var(--superficie-2)] border border-[var(--borda-forte)] flex items-center justify-center text-[var(--texto)] shadow-sm text-base">
                     ⚙️
                   </div>
-                  <h3 className="text-xs font-semibold text-white">Preferências do Sistema</h3>
-                  <p className="text-[11px] text-white/50">
+                  <h3 className="text-xs font-semibold text-[var(--texto)]">Preferências do Sistema</h3>
+                  <p className="text-[11px] text-[var(--texto-2)] max-w-[260px] leading-relaxed">
                     Ajustes de atalhos globais, modelos de IA e chaves locais protegidas.
                   </p>
                 </div>

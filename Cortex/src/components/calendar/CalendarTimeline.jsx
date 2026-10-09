@@ -134,12 +134,10 @@ const TimelineEventCard = React.memo(
         whileTap={{ scale: 0.98 }}
         onClick={onClick}
         className={cn(
-          "relative flex items-stretch gap-2.5 px-3 py-2.5 rounded-2xl transition-colors cursor-pointer select-none",
-          "bg-white/[0.03] hover:bg-white/[0.06] backdrop-blur-md",
-          "border shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]",
+          "cartao cartao-clicavel rounded-[16px] relative flex items-stretch gap-2.5 px-3 py-2.5 transition-all select-none",
           isSelected
-            ? "bg-white/[0.08] border-white/20 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12),0_4px_20px_rgba(0,0,0,0.3)] ring-1 ring-white/10"
-            : "border-white/[0.06] hover:border-white/10"
+            ? "border-[var(--destaque)] bg-[var(--superficie-2)] shadow-[inset_0_1px_1px_0_rgba(167,139,250,0.3),0_8px_24px_rgba(0,0,0,0.4)] ring-1 ring-[var(--destaque)]/40"
+            : "hover:border-[var(--borda-forte)]"
         )}
       >
         {/* Indicador visual lateral de 3px com cor da categoria */}

@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "./tokens.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -126,11 +127,23 @@
   }
   html,
   body,
-  #root {
+  #root,
+  #root > div {
     background: transparent !important;
     background-color: transparent !important;
+    border: none !important;
+    border-width: 0 !important;
+    box-shadow: none !important;
+    outline: none !important;
     margin: 0;
     padding: 0;
+  }
+  aside[aria-label="Cortex Navigation Rail"] {
+    background: transparent !important;
+    border: none !important;
+    border-width: 0 !important;
+    box-shadow: none !important;
+    outline: none !important;
   }
   html {
     color-scheme: dark;

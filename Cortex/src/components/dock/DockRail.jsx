@@ -14,14 +14,16 @@ import {
 } from "@/components/ui/tooltip";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { invoke } from "@tauri-apps/api/core";
-import { cn } from "cn";
+import { listen } from "@tauri-apps/api/event";
+import { cn } from "@/lib/utils";
+import { useAreaInterativa } from "@/hooks/useAreaInterativa";
 
 /**
  * Tab identifiers supported across the Cortex desktop client
  * @typedef {'inbox' | 'calendar' | 'obsidian' | 'settings'} DockTab
  */
 
-const NAV_ITEMS = [
+const SCOOP_NAV_ITEMS = [
   {
     id: "inbox",
     label: "Inbox & Prioridades",
@@ -43,102 +45,140 @@ const NAV_ITEMS = [
     shortcut: "⌘3",
     badgeField: null,
   },
-  {
-    id: "settings",
-    label: "Configurações",
-    icon: Settings,
-    shortcut: "⌘,",
-    badgeField: null,
-  },
 ];
 
+const SETTINGS_NAV_ITEM = {
+  id: "settings",
+  label: "Configurações",
+  icon: Settings,
+  shortcut: "⌘,",
+  badgeField: null,
+};
+
+const ALL_NAV_ITEMS = [...SCOOP_NAV_ITEMS, SETTINGS_NAV_ITEM];
+
+// Física de mola rápida para abertura a 120Hz
+const SPRING_TRANSITION = {
+  type: "spring",
+  mass: 0.12,
+  stiffness: 200,
+  damping: 15,
+};
+
+// Fechamento cúbico suave macOS ProMotion
+const CUBIC_EXIT_TRANSITION = {
+  duration: 0.22,
+  ease: [0.16, 1, 0.3, 1],
+};
+
+const MACOS_EASING = [0.16, 1, 0.3, 1];
+
 /**
- * DockRail: Barra lateral flutuante estilo macOS (Liquid Glass / Dynamic Island)
- * Suporta modo retraído "Edge Notch" (Imagem 1) com expansão suave ao hover e debounce de 220ms.
+ * DockRail: Barra lateral flutuante estilo macOS ProMotion 120Hz.
  * 
- * @param {Object} props
- * @param {DockTab} props.activeTab - Aba atualmente ativa
- * @param {(tab: DockTab) => void} props.onTabChange - Callback disparado ao selecionar aba
- * @param {number} [props.highUrgencyCount=0] - Contagem de mensagens urgentes para o badge
- * @param {boolean} [props.isOpen=true] - Se o painel flyout está expandido
- * @param {() => void} [props.onToggleFlyout] - Alterna visibilidade do flyout
- * @param {'Left' | 'Right' | 'TopCenter' | 'Custom'} [props.preset='Right'] - Preset de ancoragem ativo
- * @param {boolean} [props.isPuck=false] - Se a dock está morphada em bolha de arrasto
+ * 1. Janela Estável: Zero resize Cocoa no hover. Hit-testing passivo via set_ignore_cursor_events.
+ * 2. Casca Limpa: Zero caminhos SVG cortando bordas.
+ * 3. The Scoop: Orelhas com gradientes radiais invertidos de 14px (delta anti-aliasing 0.5px),
+ *    corpo border-radius 18px e acabamento #08080a/90 backdrop-blur-2xl.
+ * 4. Tracinho Minimalista: Revela bolha circular de configurações de 32px ao hover.
  */
 export function DockRail({
   activeTab = "inbox",
   onTabChange,
   highUrgencyCount = 0,
-  isOpen = true,
+  isOpen = false,
   onToggleFlyout,
   preset = "Right",
   isPuck = false,
 }) {
   const [isHovered, setIsHovered] = useState(false);
+  const [dockMode, setDockMode] = useState("notch");
+  const [isSettingsHovered, setIsSettingsHovered] = useState(false);
+  
   const leaveTimeoutRef = useRef(null);
+  const settingsLeaveTimeoutRef = useRef(null);
   const isOpenRef = useRef(isOpen);
+  isOpenRef.current = isOpen;
+
+  const isVerticalPreset = preset === "Right" || preset === "Left";
+
+  // Callback ao sair de todas as áreas interativas: fecha hover instantaneamente
+  const handleCursorFora = useCallback(() => {
+    if (!isOpenRef.current) {
+      setIsHovered(false);
+      setIsSettingsHovered(false);
+      setDockMode("notch");
+    }
+  }, []);
+
+  // Hook que mede elementos interativos e despacha ao backend Rust
+  useAreaInterativa("[data-cortex-interactive]", handleCursorFora);
+
+  // Sincroniza eventos de modo emitidos pelo backend
+  useEffect(() => {
+    let unlisten;
+    listen("dock-mode-changed", (event) => {
+      if (event.payload) {
+        if (!isOpenRef.current || event.payload === "flyout") {
+          setDockMode(event.payload);
+        }
+        if (event.payload === "scoop") {
+          if (leaveTimeoutRef.current) {
+            clearTimeout(leaveTimeoutRef.current);
+            leaveTimeoutRef.current = null;
+          }
+          setIsHovered(true);
+        }
+      }
+    }).then((un) => {
+      unlisten = un;
+    });
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   useEffect(() => {
-    isOpenRef.current = isOpen;
-    if (!isOpen) {
+    if (!isOpen && isHovered) {
       if (leaveTimeoutRef.current) clearTimeout(leaveTimeoutRef.current);
       leaveTimeoutRef.current = setTimeout(() => {
         if (!isOpenRef.current) {
           setIsHovered(false);
+          setDockMode("notch");
         }
-      }, 200);
+      }, 220);
     }
-  }, [isOpen]);
+  }, [isOpen, isHovered]);
 
-  const triggerDebounce = useCallback(() => {
-    if (leaveTimeoutRef.current) {
-      clearTimeout(leaveTimeoutRef.current);
-    }
-    leaveTimeoutRef.current = setTimeout(() => {
-      if (!isOpenRef.current) {
-        setIsHovered(false);
-      }
-    }, 200);
+  useEffect(() => {
+    return () => {
+      if (leaveTimeoutRef.current) clearTimeout(leaveTimeoutRef.current);
+      if (settingsLeaveTimeoutRef.current) clearTimeout(settingsLeaveTimeoutRef.current);
+    };
   }, []);
 
+  // Hover handlers no WebKit: Zero resize nativo!
   const handleMouseEnter = useCallback(() => {
     if (leaveTimeoutRef.current) {
       clearTimeout(leaveTimeoutRef.current);
       leaveTimeoutRef.current = null;
     }
     setIsHovered(true);
+    setDockMode("scoop");
   }, []);
 
   const handleMouseLeave = useCallback(() => {
-    triggerDebounce();
-  }, [triggerDebounce]);
-
-  useEffect(() => {
-    const handleMouseOut = (e) => {
-      if (!e.relatedTarget && !e.toElement) {
-        triggerDebounce();
+    if (leaveTimeoutRef.current) {
+      clearTimeout(leaveTimeoutRef.current);
+    }
+    leaveTimeoutRef.current = setTimeout(() => {
+      if (!isOpenRef.current) {
+        setIsHovered(false);
+        setDockMode("notch");
       }
-    };
-    const handleBlur = () => {
-      triggerDebounce();
-    };
-    const handleDocLeave = () => {
-      triggerDebounce();
-    };
-
-    window.addEventListener("mouseout", handleMouseOut);
-    window.addEventListener("blur", handleBlur);
-    document.addEventListener("mouseleave", handleDocLeave);
-
-    return () => {
-      window.removeEventListener("mouseout", handleMouseOut);
-      window.removeEventListener("blur", handleBlur);
-      document.removeEventListener("mouseleave", handleDocLeave);
-      if (leaveTimeoutRef.current) {
-        clearTimeout(leaveTimeoutRef.current);
-      }
-    };
-  }, [triggerDebounce]);
+    }, 220);
+  }, []);
 
   const handleItemClick = (tabId) => {
     if (activeTab === tabId && onToggleFlyout) {
@@ -148,13 +188,31 @@ export function DockRail({
     }
   };
 
+  // Peek Trigger da Bolha de Configurações
+  const handleSettingsMouseEnter = () => {
+    if (settingsLeaveTimeoutRef.current) {
+      clearTimeout(settingsLeaveTimeoutRef.current);
+      settingsLeaveTimeoutRef.current = null;
+    }
+    setIsSettingsHovered(true);
+  };
+
+  const handleSettingsMouseLeave = () => {
+    if (settingsLeaveTimeoutRef.current) {
+      clearTimeout(settingsLeaveTimeoutRef.current);
+    }
+    settingsLeaveTimeoutRef.current = setTimeout(() => {
+      setIsSettingsHovered(false);
+    }, 180);
+  };
+
   const handleContractToPuck = () => {
     invoke("set_dragging_puck", { enabled: true }).catch((err) => {
       console.error("Falha ao recolher dock para modo bolinha:", err);
     });
   };
 
-  // Refs para desambiguação estrita de clique vs arrasto no Modo Puck
+  // Desambiguação de clique vs arrasto no Modo Puck
   const hasDraggedRef = useRef(false);
   const dragStartPosRef = useRef({ x: 0, y: 0 });
   const dragStartTimeRef = useRef(0);
@@ -197,6 +255,7 @@ export function DockRail({
       <motion.aside
         layout
         layoutId="dock-container"
+        data-cortex-interactive="true"
         transition={springConfig}
         onMouseDown={handlePuckMouseDown}
         onMouseMove={handlePuckMouseMove}
@@ -221,12 +280,12 @@ export function DockRail({
       <motion.aside
         layout
         layoutId="dock-container"
+        data-cortex-interactive="true"
         transition={springConfig}
         onDoubleClick={handleContractToPuck}
         aria-label="Cortex Navigation Pill TopCenter"
         className="obsidian-surface fixed top-0 left-1/2 -translate-x-1/2 z-50 flex flex-row items-center h-11 w-[260px] px-3 py-1 gap-2 rounded-full border border-white/[0.12] shadow-2xl shadow-black/60 select-none pointer-events-auto cursor-default"
       >
-        {/* Top Brand Logo / Pulse Indicator / Sparkles Action */}
         <div 
           onMouseDown={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
@@ -247,16 +306,14 @@ export function DockRail({
           </div>
         </div>
 
-        {/* Separador vertical sutil */}
         <div className="h-4 w-px bg-white/10 shrink-0" />
 
-        {/* Navigation Items (horizontal) */}
         <nav 
           className="flex flex-row gap-1 items-center flex-1 justify-center"
           onMouseDown={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
         >
-          {NAV_ITEMS.map((item) => {
+          {ALL_NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             const showBadge = item.badgeField === "unread" && highUrgencyCount > 0;
@@ -307,10 +364,8 @@ export function DockRail({
           })}
         </nav>
 
-        {/* Separador vertical sutil */}
         <div className="h-4 w-px bg-white/10 shrink-0" />
 
-        {/* Status Dot */}
         <div 
           className="px-0.5 flex items-center justify-center"
           onMouseDown={(e) => e.stopPropagation()}
@@ -327,28 +382,24 @@ export function DockRail({
     );
   }
 
-  // Modo Vertical (Right, Left, Custom) - Separação Estrita Notch vs Scoop
+  // ==========================================
+  // MODO VERTICAL (Right ou Left)
+  // Ancoragem Fixa de 60px x 300px (Zero Resize Cocoa no Hover)
+  // Transplante Niko: Orelhas Radiais Invertidas e Hit-Testing Passivo
+  // ==========================================
   const isLeft = preset === "Left";
   const tooltipSide = isLeft ? "right" : "left";
 
-  const TOP_NAV_ITEMS = NAV_ITEMS.filter((item) => item.id !== "settings");
-  const SETTINGS_ITEM = NAV_ITEMS.find((item) => item.id === "settings");
+  const isExpanded = isVerticalPreset
+    ? dockMode === "scoop" || dockMode === "flyout" || isOpen || isHovered
+    : Boolean(isOpen || isHovered);
 
-  // Estado de expansão: abre no hover ou quando o flyout está ativo
-  const isExpanded = Boolean(isOpen || isHovered);
+  const showSettingsBubble = isSettingsHovered || activeTab === "settings";
 
-  // Geometria Bézier dos filés côncavos (Notch e Scoop)
-  const notchPathD = isLeft
-    ? "M 0,0 C 0,10 8,16 18,20 C 24,23 26,28 26,34 L 26,106 C 26,112 24,117 18,120 C 8,124 0,130 0,140 Z"
-    : "M 26,0 C 26,10 18,16 8,20 C 2,23 0,28 0,34 L 0,106 C 0,112 2,117 8,120 C 18,124 26,130 26,140 Z";
-
-  const scoopPathD = isLeft
-    ? "M 0,0 C 0,18 22,26 48,34 C 60,38 68,44 68,54 L 68,226 C 68,236 60,242 48,246 C 22,254 0,262 0,280 Z"
-    : "M 68,0 C 68,18 46,26 20,34 C 8,38 0,44 0,54 L 0,226 C 0,236 8,242 20,246 C 46,254 68,262 68,280 Z";
-
+  // Container de 60px fixo, 100% transparente, sem bordas ou sombras vazando
   const containerClasses = cn(
-    "fixed top-1/2 -translate-y-1/2 z-50 flex items-center select-none pointer-events-none w-[68px]",
-    isLeft ? "left-0 justify-start" : "right-0 justify-end"
+    "fixed top-1/2 -translate-y-1/2 z-50 flex flex-col justify-center select-none pointer-events-auto h-[300px] w-[60px] bg-transparent border-none outline-none shadow-none",
+    isLeft ? "left-0 items-start" : "right-0 items-end"
   );
 
   return (
@@ -358,18 +409,28 @@ export function DockRail({
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      <AnimatePresence initial={false}>
+      <AnimatePresence mode="wait" initial={false}>
         {!isExpanded ? (
-          /* Estado Retraído: O Edge Notch Real (Fiel à Imagem 4) */
+          /* ==============================================================
+             ESTADO RETRAÍDO: O Edge Notch na Borda
+             Zero caminhos Bézier quebrados: Acabamento límpido com orelhas radiais
+             Colado estritamente à borda da tela.
+             ============================================================== */
           <motion.div
             key="dock-notch"
-            initial={{ opacity: 0, x: isLeft ? -10 : 10 }}
+            data-cortex-interactive="true"
+            initial={{ opacity: 0, x: isLeft ? -16 : 16 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: isLeft ? -10 : 10 }}
-            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-            className="relative flex flex-col items-center justify-center w-[26px] h-[140px] pointer-events-auto cursor-pointer drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)] group"
+            exit={{ opacity: 0, x: isLeft ? -16 : 16 }}
+            transition={{ duration: 0.18, ease: MACOS_EASING }}
+            style={{ willChange: "transform, opacity", transform: "translate3d(0,0,0)" }}
+            className={cn(
+              "relative flex flex-col items-center justify-center w-[22px] h-[132px] pointer-events-auto cursor-pointer drop-shadow-[0_4px_20px_rgba(0,0,0,0.6)] group border-none bg-[#08080a]/90 backdrop-blur-2xl border-y border-white/[0.08]",
+              isLeft ? "rounded-r-[12px] border-r" : "rounded-l-[12px] border-l"
+            )}
             onClick={() => {
               setIsHovered(true);
+              setDockMode("scoop");
               if (!isOpen && onToggleFlyout) {
                 onToggleFlyout();
               }
@@ -381,41 +442,41 @@ export function DockRail({
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 setIsHovered(true);
+                setDockMode("scoop");
                 if (!isOpen && onToggleFlyout) {
                   onToggleFlyout();
                 }
               }
             }}
           >
-            {/* Fundo translúcido líquido com clipPath orgânico */}
+            {/* Orelha superior radial invertida do Notch */}
             <div
-              className="absolute inset-0 bg-[#0c0d0e]/85 backdrop-blur-2xl saturate-180 pointer-events-none group-hover:bg-[#0c0d0e]/95 transition-colors duration-200"
-              style={{ clipPath: `path('${notchPathD}')` }}
+              className={cn("absolute -top-[10px] w-[10px] h-[10px] pointer-events-none", isLeft ? "left-0" : "right-0")}
+              style={{
+                background: isLeft
+                  ? "radial-gradient(circle at 0 0, transparent 9.5px, #08080a 10px)"
+                  : "radial-gradient(circle at 100% 0, transparent 9.5px, #08080a 10px)",
+              }}
             />
 
-            {/* SVG Bezel Orgânico com Filés Côncavos */}
-            <svg
-              className="absolute inset-0 w-[26px] h-[140px] overflow-visible pointer-events-none"
-              viewBox="0 0 26 140"
-              fill="none"
-            >
-              <path
-                d={notchPathD}
-                fill="rgba(12, 13, 14, 0.45)"
-                stroke="rgba(255, 255, 255, 0.08)"
-                strokeWidth="1"
-                className="group-hover:stroke-white/15 transition-colors duration-200"
-              />
-            </svg>
+            {/* Orelha inferior radial invertida do Notch */}
+            <div
+              className={cn("absolute -bottom-[10px] w-[10px] h-[10px] pointer-events-none", isLeft ? "left-0" : "right-0")}
+              style={{
+                background: isLeft
+                  ? "radial-gradient(circle at 0 100%, transparent 9.5px, #08080a 10px)"
+                  : "radial-gradient(circle at 100% 100%, transparent 9.5px, #08080a 10px)",
+              }}
+            />
 
             {/* Conteúdo interno: 4 dots de grip e CORTEX vertical */}
             <div
               className={cn(
-                "relative z-10 flex flex-col items-center justify-center gap-2.5 pointer-events-none",
+                "relative z-10 flex flex-col items-center justify-center gap-2 pointer-events-none",
                 isLeft ? "pl-0.5" : "pr-0.5"
               )}
             >
-              {/* Grip icon: 4 dots */}
+              {/* Grip icon: 4 dots '::' */}
               <div className="flex flex-col items-center gap-0.5 opacity-70 group-hover:opacity-100 transition-opacity">
                 <div className="flex gap-0.5">
                   <div className="w-1 h-1 rounded-full bg-white/70" />
@@ -427,58 +488,77 @@ export function DockRail({
                 </div>
               </div>
 
-              {/* CORTEX Vertical */}
+              {/* Tipografia Vertical "CORTEX" */}
               <span
-                className="text-[9px] font-semibold tracking-[0.22em] text-white/60 group-hover:text-white/90 uppercase select-none transition-colors"
+                className="text-[8.5px] font-semibold tracking-[0.22em] text-white/60 group-hover:text-white/90 uppercase select-none transition-colors"
                 style={{
                   writingMode: "vertical-rl",
                   transform: "rotate(180deg)",
                 }}
               >
-                Cortex
+                CORTEX
               </span>
             </div>
           </motion.div>
         ) : (
-          /* Estado Expandido: O Scoop Bezel com Proporções Finais (Fiel à Imagem 3) */
-          <motion.div
-            key="dock-scoop"
-            initial={{ opacity: 0, x: isLeft ? -15 : 15 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: isLeft ? -15 : 15 }}
-            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-            className="relative flex items-center justify-center w-[68px] h-[280px] pointer-events-auto drop-shadow-[0_8px_32px_rgba(0,0,0,0.7)]"
+          /* ==============================================================
+             ESTADO EXPANDIDO: THE SCOOP COM ORELHAS RADIAIS INVERTIDAS
+             1. Orelhas radiais de 14px com delta 0.5px conectando à borda da tela.
+             2. Corpo em border-radius 18px com acabamento #08080a/90 backdrop-blur-2xl.
+             3. 3 Botões em slots de 32px com anel esmeralda no ativo.
+             4. Tracinho minimalista na base que infla na bolha de configurações.
+             ============================================================== */
+          <div
+            key="dock-expanded-group"
+            className={cn(
+              "flex flex-col justify-center w-[60px] pointer-events-auto border-none bg-transparent",
+              isLeft ? "items-start" : "items-end"
+            )}
           >
-            {/* Fundo translúcido líquido com clipPath orgânico */}
-            <div
-              className="absolute inset-0 bg-[#0c0d0e]/85 backdrop-blur-3xl saturate-180 pointer-events-none"
-              style={{ clipPath: `path('${scoopPathD}')` }}
-            />
-
-            {/* SVG Scoop Bezel Orgânico com Filés Côncavos e Borda Sutil */}
-            <svg
-              className="absolute inset-0 w-[68px] h-[280px] overflow-visible pointer-events-none"
-              viewBox="0 0 68 280"
-              fill="none"
+            {/* 1. CÁPSULA SUPERIOR: The Scoop (3 Botões em Slots de 32px) */}
+            <motion.div
+              key="dock-scoop"
+              data-cortex-interactive="true"
+              initial={{ opacity: 0, x: isLeft ? -28 : 28 }}
+              animate={{ opacity: 1, x: 0, transition: SPRING_TRANSITION }}
+              exit={{ opacity: 0, x: isLeft ? -28 : 28, transition: CUBIC_EXIT_TRANSITION }}
+              style={{ willChange: "transform, opacity", transform: "translate3d(0,0,0)" }}
+              className={cn(
+                "relative flex flex-col items-center justify-center w-[52px] py-3.5 pointer-events-auto drop-shadow-[0_8px_32px_rgba(0,0,0,0.65)] bg-[#08080a]/90 backdrop-blur-2xl border-y border-white/[0.08]",
+                isLeft
+                  ? "rounded-r-[18px] border-r border-l-0"
+                  : "rounded-l-[18px] border-l border-r-0"
+              )}
             >
-              <path
-                d={scoopPathD}
-                fill="rgba(12, 13, 14, 0.45)"
-                stroke="rgba(255, 255, 255, 0.08)"
-                strokeWidth="1"
+              {/* Orelha superior radial invertida (14px com delta de anti-aliasing de 0.5px) */}
+              <div
+                className={cn("absolute -top-[14px] w-[14px] h-[14px] pointer-events-none", isLeft ? "left-0" : "right-0")}
+                style={{
+                  background: isLeft
+                    ? "radial-gradient(circle at 0 0, transparent 13.5px, #08080a 14px)"
+                    : "radial-gradient(circle at 100% 0, transparent 13.5px, #08080a 14px)",
+                }}
               />
-            </svg>
 
-            {/* Navegação Vertical com Respiro Superior/Inferior Amplo (py-6) */}
-            <nav
-              className="relative z-10 flex flex-col items-center justify-between h-full py-6 pointer-events-auto"
-              aria-label="Cortex Apps"
-            >
-              {/* 3 Botões Principais no Topo (Inbox, Calendário, Notas) - slots de 32px e ícones de 16px */}
-              <div className="flex flex-col items-center gap-3">
-                {TOP_NAV_ITEMS.map((item) => {
+              {/* Orelha inferior radial invertida (14px com delta de anti-aliasing de 0.5px) */}
+              <div
+                className={cn("absolute -bottom-[14px] w-[14px] h-[14px] pointer-events-none", isLeft ? "left-0" : "right-0")}
+                style={{
+                  background: isLeft
+                    ? "radial-gradient(circle at 0 100%, transparent 13.5px, #08080a 14px)"
+                    : "radial-gradient(circle at 100% 100%, transparent 13.5px, #08080a 14px)",
+                }}
+              />
+
+              {/* 3 Botões em slots de 32px (Inbox, Calendário, Notas) com anel circular esmeralda no item ativo */}
+              <nav
+                className="relative z-10 flex flex-col items-center justify-center gap-2 pointer-events-auto border-none bg-transparent"
+                aria-label="Cortex Apps"
+              >
+                {SCOOP_NAV_ITEMS.map((item) => {
                   const Icon = item.icon;
                   const isActive = activeTab === item.id;
+                  const showBadge = item.badgeField === "unread" && highUrgencyCount > 0;
 
                   return (
                     <Tooltip key={item.id} delayDuration={150}>
@@ -487,33 +567,25 @@ export function DockRail({
                           type="button"
                           onClick={() => handleItemClick(item.id)}
                           className={cn(
-                            "relative flex items-center justify-center w-8 h-8 rounded-full outline-none",
-                            "transition-all duration-200 cursor-pointer select-none",
+                            "relative flex items-center justify-center w-8 h-8 rounded-full outline-none transition-all duration-150 cursor-pointer select-none",
                             isActive
-                              ? "text-white bg-white/[0.14] border border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.35)] scale-105"
-                              : "text-white/70 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] hover:scale-105 active:scale-95"
+                              ? "ring-1.5 ring-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.4)] bg-emerald-500/10 text-white"
+                              : "text-white/70 hover:text-white bg-transparent hover:bg-white/[0.08] active:scale-95"
                           )}
                           aria-label={item.label}
                           aria-pressed={isActive}
                         >
-                          {/* Micro-indicador lateral de 2px no item ativo */}
-                          {isActive && (
-                            <motion.span
-                              layoutId="activeDockIndicator"
-                              className={cn(
-                                "absolute w-0.5 h-3.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.9)]",
-                                isLeft ? "-right-1" : "-left-1"
-                              )}
-                              transition={{ type: "spring", stiffness: 450, damping: 30 }}
-                            />
+                          <Icon className={cn("w-4 h-4 stroke-[1.8]", isActive ? "text-white" : "text-white/80")} />
+                          {showBadge && (
+                            <span className="absolute -top-0.5 -right-0.5 min-w-[13px] h-[13px] px-0.5 flex items-center justify-center rounded-full bg-red-500 text-[8px] font-bold text-white shadow-[0_0_6px_rgba(239,68,68,0.8)] border border-black/40">
+                              {highUrgencyCount > 9 ? "9+" : highUrgencyCount}
+                            </span>
                           )}
-
-                          <Icon className="w-4 h-4 stroke-[1.8]" />
                         </button>
                       </TooltipTrigger>
                       <TooltipContent
                         side={tooltipSide}
-                        sideOffset={12}
+                        sideOffset={14}
                         className="bg-[#181820]/95 backdrop-blur-md border-white/10 text-white shadow-xl text-xs py-1 px-2.5 rounded-lg flex items-center gap-2"
                       >
                         <span>{item.label}</span>
@@ -524,61 +596,81 @@ export function DockRail({
                     </Tooltip>
                   );
                 })}
-              </div>
+              </nav>
+            </motion.div>
 
-              {/* Separador Sutil entre os Apps Principais e Configurações */}
-              <div className="w-3.5 h-px bg-white/10 my-0.5" />
-
-              {/* Botão de Configurações Isolado na Base (w-7 h-7, ícone 14px) */}
-              {SETTINGS_ITEM && (() => {
-                const Icon = SETTINGS_ITEM.icon;
-                const isActive = activeTab === SETTINGS_ITEM.id;
-
-                return (
-                  <Tooltip key={SETTINGS_ITEM.id} delayDuration={150}>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onClick={() => handleItemClick(SETTINGS_ITEM.id)}
-                        className={cn(
-                          "relative flex items-center justify-center w-7 h-7 rounded-full outline-none",
-                          "transition-all duration-200 cursor-pointer select-none",
-                          isActive
-                            ? "text-white bg-white/[0.14] border border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.35)] scale-105"
-                            : "text-white/50 hover:text-white bg-white/[0.03] hover:bg-white/[0.08] border border-white/[0.06] hover:scale-105 active:scale-95"
-                        )}
-                        aria-label={SETTINGS_ITEM.label}
-                        aria-pressed={isActive}
+            {/* 2. PEEK TRIGGER DE CONFIGURAÇÕES:
+                Em repouso: tracinho minimalista na base
+                Ao hover: revela a bolha de configurações de 32px com a engrenagem
+            */}
+            <div
+              data-cortex-interactive="true"
+              className={cn(
+                "mt-2.5 relative flex items-center w-[52px] h-9 pointer-events-auto border-none bg-transparent justify-center"
+              )}
+              onMouseEnter={handleSettingsMouseEnter}
+              onMouseLeave={handleSettingsMouseLeave}
+            >
+              <AnimatePresence mode="wait">
+                {!showSettingsBubble ? (
+                  /* Tracinho minimalista na base que revela a bolha ao passar o mouse */
+                  <motion.div
+                    key="settings-dash"
+                    initial={{ opacity: 0, scale: 0.7 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.7 }}
+                    transition={{ duration: 0.18, ease: MACOS_EASING }}
+                    className="flex items-center justify-center cursor-pointer p-2 group border-none bg-transparent"
+                    onClick={() => handleItemClick(SETTINGS_NAV_ITEM.id)}
+                    aria-label="Configurações (Expandir)"
+                  >
+                    <div className="w-4 h-[2.5px] rounded-full bg-white/30 group-hover:bg-white/70 transition-all duration-150" />
+                  </motion.div>
+                ) : (
+                  /* Bolha circular de 32px com a engrenagem */
+                  <motion.div
+                    key="settings-bubble"
+                    initial={{ opacity: 0, scale: 0.7, x: isLeft ? -8 : 8 }}
+                    animate={{ opacity: 1, scale: 1, x: 0 }}
+                    exit={{ opacity: 0, scale: 0.7, x: isLeft ? -8 : 8 }}
+                    transition={{ duration: 0.18, ease: MACOS_EASING }}
+                    style={{ willChange: "transform, opacity", transform: "translate3d(0,0,0)" }}
+                    className="flex items-center justify-center pointer-events-auto border-none bg-transparent"
+                  >
+                    <Tooltip delayDuration={100}>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => handleItemClick(SETTINGS_NAV_ITEM.id)}
+                          className={cn(
+                            "relative flex items-center justify-center w-8 h-8 rounded-full outline-none transition-all duration-150 cursor-pointer select-none",
+                            "bg-[#08080a]/95 backdrop-blur-2xl border border-white/[0.08] shadow-[0_4px_20px_rgba(0,0,0,0.6)]",
+                            activeTab === SETTINGS_NAV_ITEM.id
+                              ? "ring-1.5 ring-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.4)] text-white bg-emerald-500/10"
+                              : "text-white/70 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] active:scale-95"
+                          )}
+                          aria-label={SETTINGS_NAV_ITEM.label}
+                          aria-pressed={activeTab === SETTINGS_NAV_ITEM.id}
+                        >
+                          <Settings className={cn("w-[15px] h-[15px] stroke-[1.8]", activeTab === SETTINGS_NAV_ITEM.id ? "text-white" : "text-white/70 group-hover:text-white")} />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side={tooltipSide}
+                        sideOffset={14}
+                        className="bg-[#181820]/95 backdrop-blur-md border-white/10 text-white shadow-xl text-xs py-1 px-2.5 rounded-lg flex items-center gap-2"
                       >
-                        {isActive && (
-                          <motion.span
-                            layoutId="activeDockIndicator"
-                            className={cn(
-                              "absolute w-0.5 h-3 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.9)]",
-                              isLeft ? "-right-1" : "-left-1"
-                            )}
-                            transition={{ type: "spring", stiffness: 450, damping: 30 }}
-                          />
-                        )}
-
-                        <Icon className="w-3.5 h-3.5 stroke-[1.8]" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side={tooltipSide}
-                      sideOffset={12}
-                      className="bg-[#181820]/95 backdrop-blur-md border-white/10 text-white shadow-xl text-xs py-1 px-2.5 rounded-lg flex items-center gap-2"
-                    >
-                      <span>{SETTINGS_ITEM.label}</span>
-                      <kbd className="px-1.5 py-0.5 text-[10px] font-mono text-white/40 bg-white/[0.06] rounded border border-white/10">
-                        {SETTINGS_ITEM.shortcut}
-                      </kbd>
-                    </TooltipContent>
-                  </Tooltip>
-                );
-              })()}
-            </nav>
-          </motion.div>
+                        <span>{SETTINGS_NAV_ITEM.label}</span>
+                        <kbd className="px-1.5 py-0.5 text-[10px] font-mono text-white/40 bg-white/[0.06] rounded border border-white/10">
+                          {SETTINGS_NAV_ITEM.shortcut}
+                        </kbd>
+                      </TooltipContent>
+                    </Tooltip>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
         )}
       </AnimatePresence>
     </aside>

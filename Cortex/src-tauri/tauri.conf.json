@@ -15,12 +15,13 @@
       {
         "label": "main",
         "title": "cortex",
-        "width": 68,
-        "height": 580,
+        "width": 60,
+        "height": 300,
         "decorations": false,
         "transparent": true,
         "shadow": false,
         "alwaysOnTop": true,
+        "acceptFirstMouse": true,
         "skipTaskbar": true,
         "visible": true
       },

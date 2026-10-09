@@ -106,10 +106,10 @@ export function NotificationList({
           onSelectApp={setSelectedApp}
           counts={counts}
         />
-        <div className="flex items-center justify-between mt-1.5 px-0.5 text-[10.5px] text-white/50">
+        <div className="flex items-center justify-between mt-2 px-1 text-[11px] font-medium tracking-[0.08em] text-[var(--texto-2)] uppercase">
           <span>{filteredMessages.length} mensagens triadas</span>
           {counts.all > 0 && (
-            <span className="text-red-400 font-medium">
+            <span className="text-red-400 font-semibold lowercase">
               {counts.all} requerem atenção
             </span>
           )}
