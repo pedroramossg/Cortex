@@ -1,7 +1,7 @@
-import React from "react";
+import React, { useState } from "react";
 import { 
   AlertCircle, 
-  CheckCircle2, 
+  Check, 
   Clock, 
   Mail, 
   Hash, 
@@ -16,7 +16,6 @@ import { cn } from "cn";
  * Extracts initials from a sender string (e.g. "Satya Nadella <satya@...>" -> "SN")
  */
 function getInitials(sender = "") {
-  // Remove email if present in brackets
   const cleanName = sender.replace(/<.*?>/, "").trim();
   if (!cleanName) return "??";
   const parts = cleanName.split(/\s+/).filter(Boolean);
@@ -47,9 +46,9 @@ function formatRelativeTime(dateInput) {
   const diffDays = Math.floor(diffHours / 24);
 
   if (diffMinutes < 1) return "Agora";
-  if (diffMinutes < 60) return `Há ${diffMinutes}m`;
-  if (diffHours < 24) return `Há ${diffHours}h`;
-  return `Há ${diffDays}d`;
+  if (diffMinutes < 60) return `${diffMinutes}m`;
+  if (diffHours < 24) return `${diffHours}h`;
+  return `${diffDays}d`;
 }
 
 /**
@@ -72,28 +71,15 @@ function ServiceIcon({ service }) {
 
 /**
  * NotificationCard: Card de notificação para a Sidebar
- * Estritamente tipado contra a tabela triaged_messages.
- * Zero dangerouslySetInnerHTML conforme security.md Check 15.
- * 
- * @param {Object} props
- * @param {Object} props.message
- * @param {string} props.message.id
- * @param {string} props.message.sender
- * @param {string} props.message.subject
- * @param {string} props.message.snippet
- * @param {'HIGH' | 'MEDIUM' | 'LOW'} [props.message.urgency]
- * @param {boolean} [props.message.is_approval_pending]
- * @param {boolean} [props.message.requires_action]
- * @param {string|Date} [props.message.received_at]
- * @param {string} [props.message.service]
- * @param {boolean} [props.isSelected]
- * @param {() => void} [props.onClick]
+ * Estilizado com tokens e profundidade do Niko (.cartao, checkbox circular tátil)
  */
 export function NotificationCard({
   message,
   isSelected = false,
   onClick,
 }) {
+  const [completed, setCompleted] = useState(false);
+
   const {
     sender = "",
     subject = "",
@@ -109,27 +95,47 @@ export function NotificationCard({
   const displayName = getDisplayName(sender);
   const formattedTime = formatRelativeTime(received_at);
 
+  const handleToggleCheck = (e) => {
+    e.stopPropagation();
+    setCompleted((prev) => !prev);
+  };
+
   return (
     <div
       onClick={onClick}
       className={cn(
-        "cartao cartao-clicavel rounded-[16px] p-3 flex flex-col gap-1.5 relative select-none",
-        isSelected
-          ? "border-[var(--destaque)] bg-[var(--superficie-2)] shadow-[inset_0_1px_1px_0_rgba(167,139,250,0.3),0_8px_24px_rgba(0,0,0,0.4)] ring-1 ring-[var(--destaque)]/40"
-          : "hover:border-[var(--borda-forte)]"
+        "cartao-clicavel rounded-[14px] p-3.5 flex flex-col gap-2 relative select-none transition-all",
+        "bg-[#161618] border border-white/[0.06] hover:border-white/[0.14]",
+        isSelected && "border-[#a78bfa]/50 bg-[#1d1d20] shadow-[0_0_16px_rgba(167,139,250,0.15)] ring-1 ring-[#a78bfa]/40",
+        completed && "opacity-55"
       )}
     >
-      {/* Header: Avatar, Remetente, Serviço e Timestamp */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
+      {/* Header: Checkbox Circular Tátil, Avatar, Remetente, Serviço e Timestamp */}
+      <div className="flex items-start justify-between gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          {/* Checkbox Circular Tátil */}
+          <button
+            type="button"
+            onClick={handleToggleCheck}
+            className={cn(
+              "w-4 h-4 rounded-full border flex items-center justify-center transition-all duration-150 shrink-0 cursor-pointer outline-none mt-0.5",
+              completed
+                ? "bg-[#a78bfa] border-[#a78bfa] text-[#0e0e10] shadow-[0_0_8px_rgba(167,139,250,0.5)] scale-105"
+                : "border-white/20 bg-white/[0.04] hover:border-white/40 active:scale-90"
+            )}
+            title={completed ? "Marcar como pendente" : "Concluir pendência"}
+            aria-label={completed ? "Marcar como pendente" : "Concluir pendência"}
+          >
+            {completed && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+          </button>
+
           <div className="relative shrink-0">
             <Avatar className="w-6 h-6 bg-white/10 border border-white/15 text-[10px] font-semibold text-white">
               <AvatarFallback className="bg-gradient-to-br from-white/15 to-white/5 text-white">
                 {initials}
               </AvatarFallback>
             </Avatar>
-            {/* Unread indicator dot */}
-            {urgency === "HIGH" && (
+            {urgency === "HIGH" && !completed && (
               <span className="absolute -top-0.5 -right-0.5 flex h-1.5 w-1.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500" />
@@ -137,45 +143,48 @@ export function NotificationCard({
             )}
           </div>
 
-          <div className="min-w-0 flex flex-col">
+          <div className="min-w-0 flex flex-col flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="text-[12px] font-semibold text-[var(--texto)] truncate">
+              <span className={cn(
+                "text-xs font-semibold text-[#f2f2f2] truncate",
+                completed && "line-through text-white/50"
+              )}>
                 {displayName}
               </span>
               <ServiceIcon service={service} />
             </div>
-            <span className="text-[11px] font-medium text-[var(--texto-2)] truncate">
+            <span className="text-[11px] font-medium text-[#9a9aa0] truncate">
               {subject}
             </span>
           </div>
         </div>
 
-        <span className="text-[10px] text-[var(--texto-3)] font-mono shrink-0 whitespace-nowrap">
+        <span className="text-[10px] text-white/40 font-mono tabular-nums shrink-0 whitespace-nowrap">
           {formattedTime}
         </span>
       </div>
 
       {/* Snippet de Texto Seguro (Anti-XSS: Zero dangerouslySetInnerHTML) */}
-      <p className="text-[11px] text-[var(--texto-2)] line-clamp-2 leading-relaxed pl-8">
+      <p className="text-[11px] text-[#9a9aa0] line-clamp-2 leading-relaxed pl-6.5">
         {snippet}
       </p>
 
-      {/* Badges de Status & Urgência */}
-      <div className="flex items-center gap-1.5 pl-8 flex-wrap">
+      {/* Tags Coloridas Modulares */}
+      <div className="flex items-center gap-1.5 pl-6.5 flex-wrap">
         {urgency === "HIGH" && (
           <Badge
             variant="outline"
-            className="text-[8.5px] px-1.5 py-0 h-3.5 border-red-500/40 text-red-300 bg-red-500/15 font-semibold"
+            className="text-[9px] px-1.5 py-0 h-4 border-red-500/30 text-red-300 bg-red-500/15 font-semibold tracking-wide uppercase"
           >
             <AlertCircle className="w-2.5 h-2.5 mr-0.5" />
-            URGENTE
+            Urgente
           </Badge>
         )}
 
         {requires_action && (
           <Badge
             variant="outline"
-            className="text-[8.5px] px-1.5 py-0 h-3.5 border-amber-500/40 text-amber-300 bg-amber-500/15"
+            className="text-[9px] px-1.5 py-0 h-4 border-amber-500/30 text-amber-300 bg-amber-500/15 font-medium tracking-wide uppercase"
           >
             Ação Requerida
           </Badge>
@@ -184,7 +193,7 @@ export function NotificationCard({
         {is_approval_pending && (
           <Badge
             variant="outline"
-            className="text-[8.5px] px-1.5 py-0 h-3.5 border-blue-500/40 text-blue-300 bg-blue-500/15"
+            className="text-[9px] px-1.5 py-0 h-4 border-blue-500/30 text-blue-300 bg-blue-500/15 font-medium tracking-wide uppercase"
           >
             <Clock className="w-2.5 h-2.5 mr-0.5" />
             Pendente

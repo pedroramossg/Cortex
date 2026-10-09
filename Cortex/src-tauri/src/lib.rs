@@ -158,7 +158,7 @@ pub fn compute_dock_mode_geometry(
         DockPositionPreset::Right => {
             let (width, height) = match mode {
                 DockMode::Notch | DockMode::Scoop => (60.0, 300.0),
-                DockMode::Flyout => (420.0, 580.0),
+                DockMode::Flyout => (420.0, 640.0),
             };
             let x = mon_x + mon_width - width;
             let y = mon_y + (mon_height - height) / 2.0;
@@ -167,7 +167,7 @@ pub fn compute_dock_mode_geometry(
         DockPositionPreset::Left => {
             let (width, height) = match mode {
                 DockMode::Notch | DockMode::Scoop => (60.0, 300.0),
-                DockMode::Flyout => (420.0, 580.0),
+                DockMode::Flyout => (420.0, 640.0),
             };
             let x = mon_x;
             let y = mon_y + (mon_height - height) / 2.0;
@@ -177,7 +177,7 @@ pub fn compute_dock_mode_geometry(
             match mode {
                 DockMode::Flyout => {
                     let width = 340.0;
-                    let height = 580.0;
+                    let height = 640.0;
                     let x = mon_x + (mon_width - width) / 2.0;
                     let y = mon_y + 40.0;
                     (x, y, width, height)
@@ -194,7 +194,7 @@ pub fn compute_dock_mode_geometry(
         DockPositionPreset::Custom => {
             let (width, height) = match mode {
                 DockMode::Notch | DockMode::Scoop => (60.0, 300.0),
-                DockMode::Flyout => (420.0, 580.0),
+                DockMode::Flyout => (420.0, 640.0),
             };
             (mon_x, mon_y, width, height)
         }
@@ -426,7 +426,7 @@ pub fn apply_dock_mode(
 
             let (target_w, target_h) = match resolved_mode {
                 DockMode::Notch | DockMode::Scoop => (60.0, 300.0),
-                DockMode::Flyout => (420.0, 580.0),
+                DockMode::Flyout => (420.0, 640.0),
             };
 
             let raw_x = if win_center_x < mon_center_x {
@@ -522,6 +522,30 @@ fn vigiar_cursor(app: tauri::AppHandle) {
                 if is_puck {
                     let estava_fora = *fora.get(rotulo).unwrap_or(&false);
                     if estava_fora {
+                        let _ = janela.set_ignore_cursor_events(false);
+                        fora.insert(rotulo.clone(), false);
+                    }
+                    continue;
+                }
+
+                // Trava Absoluta de Janela Aberta no Rust:
+                // Se o estado for DockMode::Flyout, o Rust DEVE IGNORAR qualquer verificação de saída
+                // do cursor e NUNCA emitir cortex://cursor-fora. Mantém eventos desbloqueados permanentemente.
+                let is_flyout = {
+                    if let Some(dock_state) = app.try_state::<DockState>() {
+                        dock_state
+                            .mode
+                            .lock()
+                            .map(|m| *m == DockMode::Flyout)
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    }
+                };
+
+                if is_flyout {
+                    let estava_fora = *fora.get(rotulo).unwrap_or(&false);
+                    if estava_fora || !fora.contains_key(rotulo) {
                         let _ = janela.set_ignore_cursor_events(false);
                         fora.insert(rotulo.clone(), false);
                     }
@@ -1719,10 +1743,10 @@ mod tests {
 
     #[test]
     fn test_sidebar_expanded_dock_positioning() {
-        // Expanded state: width = 420.0, height = 580.0 on 1512x982 display
-        let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 420.0, 580.0);
+        // Expanded state: width = 420.0, height = 640.0 on 1512x982 display
+        let (x, y) = compute_sidebar_position(0.0, 0.0, 1512.0, 982.0, 420.0, 640.0);
         assert_eq!(x, 1092.0); // 1512 - 420 = 1092
-        assert_eq!(y, 201.0);  // (982 - 580) / 2 = 201
+        assert_eq!(y, 171.0);  // (982 - 640) / 2 = 171
     }
 
     #[test]
@@ -1783,12 +1807,12 @@ mod tests {
         assert_eq!(w, 60.0);
         assert_eq!(h, 300.0);
 
-        // Flyout
+        // Flyout (420x640)
         let (x, y, w, h) = compute_dock_mode_geometry(DockMode::Flyout, DockPositionPreset::Right, 0.0, 0.0, 1512.0, 982.0);
         assert_eq!(x, 1092.0);
-        assert_eq!(y, 201.0);
+        assert_eq!(y, 171.0);
         assert_eq!(w, 420.0);
-        assert_eq!(h, 580.0);
+        assert_eq!(h, 640.0);
     }
 
     #[test]
@@ -1807,12 +1831,12 @@ mod tests {
         assert_eq!(w, 60.0);
         assert_eq!(h, 300.0);
 
-        // Flyout
+        // Flyout (420x640)
         let (x, y, w, h) = compute_dock_mode_geometry(DockMode::Flyout, DockPositionPreset::Left, 0.0, 0.0, 1512.0, 982.0);
         assert_eq!(x, 0.0);
-        assert_eq!(y, 201.0);
+        assert_eq!(y, 171.0);
         assert_eq!(w, 420.0);
-        assert_eq!(h, 580.0);
+        assert_eq!(h, 640.0);
     }
 
     #[test]
@@ -1850,12 +1874,12 @@ mod tests {
         assert_eq!(w, 60.0);
         assert_eq!(h, 300.0);
 
-        // Expanded (420px x 580px)
+        // Expanded (420px x 640px)
         let (x, y, w, h) = compute_preset_geometry(DockPositionPreset::Right, true, 0.0, 0.0, 1512.0, 982.0);
         assert_eq!(x, 1092.0);
-        assert_eq!(y, 201.0);
+        assert_eq!(y, 171.0);
         assert_eq!(w, 420.0);
-        assert_eq!(h, 580.0);
+        assert_eq!(h, 640.0);
     }
 
     #[test]
@@ -1867,12 +1891,12 @@ mod tests {
         assert_eq!(w, 60.0);
         assert_eq!(h, 300.0);
 
-        // Expanded
+        // Expanded (420px x 640px)
         let (x, y, w, h) = compute_preset_geometry(DockPositionPreset::Left, true, 0.0, 0.0, 1512.0, 982.0);
         assert_eq!(x, 0.0);
-        assert_eq!(y, 201.0);
+        assert_eq!(y, 171.0);
         assert_eq!(w, 420.0);
-        assert_eq!(h, 580.0);
+        assert_eq!(h, 640.0);
     }
 
     #[test]
@@ -1884,12 +1908,12 @@ mod tests {
         assert_eq!(w, 260.0);
         assert_eq!(h, 44.0);
 
-        // Expanded: expands downwards to width 340px and height 580px
+        // Expanded: expands downwards to width 340px and height 640px
         let (x, y, w, h) = compute_preset_geometry(DockPositionPreset::TopCenter, true, 0.0, 0.0, 1512.0, 982.0);
         assert_eq!(x, (1512.0 - 340.0) / 2.0); // 586.0
         assert_eq!(y, 40.0);
         assert_eq!(w, 340.0);
-        assert_eq!(h, 580.0);
+        assert_eq!(h, 640.0);
     }
 
     #[test]

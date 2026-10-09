@@ -38,6 +38,10 @@ export function useAreaInterativa(seletores, onCursorFora, janela = "main") {
           h: Math.round(r.height),
         }));
 
+      // Pausa o envio se a lista for vazia (durante transições/ciclos de montagem)
+      // para evitar que o dock se tranque sozinho por falso negativo
+      if (retangulos.length === 0) return;
+
       const atual = JSON.stringify(retangulos);
       if (atual === anterior) return;
       anterior = atual;

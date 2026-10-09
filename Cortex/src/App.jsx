@@ -5,6 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 import { DockRail } from "@/components/dock/DockRail";
 import { NotificationList } from "@/components/inbox/NotificationList";
 import { CalendarTimeline } from "@/components/calendar/CalendarTimeline";
+import { ObsidianNotesTab } from "@/components/obsidian/ObsidianNotesTab";
+import { SettingsTab } from "@/components/settings/SettingsTab";
 
 function App() {
   const [activeTab, setActiveTab] = useState("inbox");
@@ -18,7 +20,7 @@ function App() {
   const isPuckRef = useRef(isPuck);
   isPuckRef.current = isPuck;
 
-  // Garante que o estado inicial nativo seja colapsado (28x148) e sincroniza preset
+  // Garante que o estado inicial nativo seja colapsado e sincroniza preset
   useEffect(() => {
     invoke("resize_dock_window", { mode: "notch" }).catch(() => {});
     invoke("get_dock_preset")
@@ -56,12 +58,24 @@ function App() {
         invoke("finish_dragging_puck").catch(() => {});
       }
     };
+
+    // Fechamento explícito via tecla Esc
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        if (isFlyoutOpenRef.current) {
+          setIsFlyoutOpen(false);
+        }
+      }
+    };
+
     window.addEventListener("mouseup", handleMouseUp);
+    window.addEventListener("keydown", handleKeyDown);
 
     return () => {
       if (unlistenPreset) unlistenPreset();
       if (unlistenPuck) unlistenPuck();
       window.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("keydown", handleKeyDown);
     };
   }, []);
 
@@ -103,25 +117,25 @@ function App() {
   // Determina direção e classes do Flyout conforme o preset ativo
   const isLeftHalf = typeof window !== "undefined" && (window.screenX || 0) < (window.screen?.availWidth || 1920) / 2;
 
-  let flyoutPositionClass = "fixed right-[60px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+  let flyoutPositionClass = "fixed right-[60px] top-1/2 -translate-y-1/2 w-[340px] h-[600px] max-h-[600px]";
   let flyoutInitialAnim = { opacity: 0, x: 20, scale: 0.98 };
   let flyoutExitAnim = { opacity: 0, x: 16, scale: 0.98 };
 
   if (dockPreset === "Left") {
-    flyoutPositionClass = "fixed left-[60px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+    flyoutPositionClass = "fixed left-[60px] top-1/2 -translate-y-1/2 w-[340px] h-[600px] max-h-[600px]";
     flyoutInitialAnim = { opacity: 0, x: -20, scale: 0.98 };
     flyoutExitAnim = { opacity: 0, x: -16, scale: 0.98 };
   } else if (dockPreset === "TopCenter") {
-    flyoutPositionClass = "fixed top-[52px] left-1/2 -translate-x-1/2 w-[320px] h-[510px]";
+    flyoutPositionClass = "fixed top-[52px] left-1/2 -translate-x-1/2 w-[340px] h-[600px] max-h-[600px]";
     flyoutInitialAnim = { opacity: 0, y: -16, scale: 0.98 };
     flyoutExitAnim = { opacity: 0, y: -16, scale: 0.98 };
   } else if (dockPreset === "Custom") {
     if (isLeftHalf) {
-      flyoutPositionClass = "fixed left-[60px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+      flyoutPositionClass = "fixed left-[60px] top-1/2 -translate-y-1/2 w-[340px] h-[600px] max-h-[600px]";
       flyoutInitialAnim = { opacity: 0, x: -20, scale: 0.98 };
       flyoutExitAnim = { opacity: 0, x: -16, scale: 0.98 };
     } else {
-      flyoutPositionClass = "fixed right-[60px] top-1/2 -translate-y-1/2 w-[320px] h-[580px]";
+      flyoutPositionClass = "fixed right-[60px] top-1/2 -translate-y-1/2 w-[340px] h-[600px] max-h-[600px]";
       flyoutInitialAnim = { opacity: 0, x: 20, scale: 0.98 };
       flyoutExitAnim = { opacity: 0, x: 16, scale: 0.98 };
     }
@@ -140,7 +154,7 @@ function App() {
         isPuck={isPuck}
       />
 
-      {/* Flyout Panel Flutuante (Liquid Glass) */}
+      {/* Flyout Panel Flutuante (Casca Oficial Niko: Deep Black & Glass Elevation) */}
       <AnimatePresence mode="wait" onExitComplete={handleExitComplete}>
         {isFlyoutOpen && !isPuck && (
           <motion.aside
@@ -151,12 +165,15 @@ function App() {
             exit={flyoutExitAnim}
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             aria-label="Cortex Flyout Panel"
-            className={`mac-vibrancy cartao rounded-[16px] flex flex-col p-3 shadow-2xl z-40 pointer-events-auto ${flyoutPositionClass}`}
+            style={{
+              boxShadow: "inset 0 1px 1px 0 rgba(255, 255, 255, 0.09), 0 24px 64px rgba(0, 0, 0, 0.45)",
+            }}
+            className={`bg-[#0e0e10]/95 backdrop-blur-3xl rounded-[22px] border border-white/[0.08] flex flex-col p-3.5 z-40 pointer-events-auto max-h-[600px] overflow-hidden ${flyoutPositionClass}`}
           >
             {/* Header do Flyout */}
-            <div className="flex items-center justify-between pb-2.5 border-b border-[var(--borda)] shrink-0">
+            <div className="flex items-center justify-between pb-2.5 border-b border-white/[0.08] shrink-0">
               <div>
-                <h2 className="text-[13px] font-semibold text-[var(--texto)] tracking-tight">
+                <h2 className="text-[13px] font-semibold text-[#f2f2f2] tracking-tight">
                   {activeTab === "inbox" && "Inbox & Prioridades"}
                   {activeTab === "calendar" && "Calendário & Reuniões"}
                   {activeTab === "obsidian" && "Notas Obsidian"}
@@ -167,33 +184,18 @@ function App() {
             </div>
 
             {/* Conteúdo Dinâmico por Aba */}
-            <div className="flex-1 overflow-hidden pt-2">
+            <div className="flex-1 overflow-hidden pt-2 min-h-0">
               {activeTab === "inbox" && <NotificationList />}
 
               {activeTab === "calendar" && <CalendarTimeline />}
 
-              {activeTab === "obsidian" && (
-                <div className="cartao rounded-[16px] p-5 flex flex-col items-center justify-center text-center gap-2.5 h-full text-[var(--texto-2)]">
-                  <div className="w-10 h-10 rounded-[12px] bg-[var(--superficie-2)] border border-[var(--borda-forte)] flex items-center justify-center text-purple-400 shadow-sm text-base">
-                    📝
-                  </div>
-                  <h3 className="text-xs font-semibold text-[var(--texto)]">Obsidian Local Vault</h3>
-                  <p className="text-[11px] text-[var(--texto-2)] max-w-[260px] leading-relaxed">
-                    Notas rápidas e briefings salvos diretamente no formato Markdown com frontmatter.
-                  </p>
-                </div>
-              )}
+              {activeTab === "obsidian" && <ObsidianNotesTab />}
 
               {activeTab === "settings" && (
-                <div className="cartao rounded-[16px] p-5 flex flex-col items-center justify-center text-center gap-2.5 h-full text-[var(--texto-2)]">
-                  <div className="w-10 h-10 rounded-[12px] bg-[var(--superficie-2)] border border-[var(--borda-forte)] flex items-center justify-center text-[var(--texto)] shadow-sm text-base">
-                    ⚙️
-                  </div>
-                  <h3 className="text-xs font-semibold text-[var(--texto)]">Preferências do Sistema</h3>
-                  <p className="text-[11px] text-[var(--texto-2)] max-w-[260px] leading-relaxed">
-                    Ajustes de atalhos globais, modelos de IA e chaves locais protegidas.
-                  </p>
-                </div>
+                <SettingsTab
+                  dockPreset={dockPreset}
+                  onPresetChange={setDockPreset}
+                />
               )}
             </div>
           </motion.aside>
