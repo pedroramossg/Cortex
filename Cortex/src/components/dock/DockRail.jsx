@@ -94,15 +94,13 @@ export function DockRail({
   const [isHovered, setIsHovered] = useState(false);
   const [dockMode, setDockMode] = useState("notch");
   const [isSettingsHovered, setIsSettingsHovered] = useState(false);
-  
-  const leaveTimeoutRef = useRef(null);
   const settingsLeaveTimeoutRef = useRef(null);
   const isOpenRef = useRef(isOpen);
   isOpenRef.current = isOpen;
 
   const isVerticalPreset = preset === "Right" || preset === "Left";
 
-  // Callback ao sair de todas as áreas interativas: fecha hover instantaneamente
+  // Callback ao sair de todas as áreas interativas: obedece evento do Rust
   const handleCursorFora = useCallback(() => {
     if (!isOpenRef.current) {
       setIsHovered(false);
@@ -114,7 +112,7 @@ export function DockRail({
   // Hook que mede elementos interativos e despacha ao backend Rust
   useAreaInterativa("[data-cortex-interactive]", handleCursorFora);
 
-  // Sincroniza eventos de modo emitidos pelo backend
+  // Sincroniza eventos de modo emitidos com autoridade pelo backend Rust
   useEffect(() => {
     let unlisten;
     listen("dock-mode-changed", (event) => {
@@ -123,11 +121,9 @@ export function DockRail({
           setDockMode(event.payload);
         }
         if (event.payload === "scoop") {
-          if (leaveTimeoutRef.current) {
-            clearTimeout(leaveTimeoutRef.current);
-            leaveTimeoutRef.current = null;
-          }
           setIsHovered(true);
+        } else if (event.payload === "notch") {
+          setIsHovered(false);
         }
       }
     }).then((un) => {
@@ -140,44 +136,15 @@ export function DockRail({
   }, []);
 
   useEffect(() => {
-    if (!isOpen && isHovered) {
-      if (leaveTimeoutRef.current) clearTimeout(leaveTimeoutRef.current);
-      leaveTimeoutRef.current = setTimeout(() => {
-        if (!isOpenRef.current) {
-          setIsHovered(false);
-          setDockMode("notch");
-        }
-      }, 220);
-    }
-  }, [isOpen, isHovered]);
-
-  useEffect(() => {
     return () => {
-      if (leaveTimeoutRef.current) clearTimeout(leaveTimeoutRef.current);
       if (settingsLeaveTimeoutRef.current) clearTimeout(settingsLeaveTimeoutRef.current);
     };
   }, []);
 
-  // Hover handlers no WebKit: Zero resize nativo!
+  // Hover handler de entrada: ativação imediata
   const handleMouseEnter = useCallback(() => {
-    if (leaveTimeoutRef.current) {
-      clearTimeout(leaveTimeoutRef.current);
-      leaveTimeoutRef.current = null;
-    }
     setIsHovered(true);
     setDockMode("scoop");
-  }, []);
-
-  const handleMouseLeave = useCallback(() => {
-    if (leaveTimeoutRef.current) {
-      clearTimeout(leaveTimeoutRef.current);
-    }
-    leaveTimeoutRef.current = setTimeout(() => {
-      if (!isOpenRef.current) {
-        setIsHovered(false);
-        setDockMode("notch");
-      }
-    }, 220);
   }, []);
 
   const handleItemClick = (tabId) => {
@@ -407,7 +374,6 @@ export function DockRail({
       aria-label="Cortex Navigation Rail"
       className={containerClasses}
       onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
     >
       <AnimatePresence mode="wait" initial={false}>
         {!isExpanded ? (

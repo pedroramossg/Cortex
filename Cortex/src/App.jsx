@@ -185,7 +185,9 @@ function App() {
 
             {/* Conteúdo Dinâmico por Aba */}
             <div className="flex-1 overflow-hidden pt-2 min-h-0">
-              {activeTab === "inbox" && <NotificationList />}
+              {activeTab === "inbox" && (
+                <NotificationList onNavigateSettings={() => handleTabChange("settings")} />
+              )}
 
               {activeTab === "calendar" && <CalendarTimeline />}
 

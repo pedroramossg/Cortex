@@ -20,6 +20,148 @@ pub struct EstadoAreas {
     pub areas: Mutex<HashMap<String, Vec<Retangulo>>>,
 }
 
+/// Persistent & in-memory credentials storage for services (Gmail, Slack, Webhooks)
+#[derive(Default)]
+pub struct CredenciaisState {
+    pub credenciais: Mutex<HashMap<String, serde_json::Value>>,
+}
+
+/// Helper to get credentials file path in app config dir
+pub fn get_credentials_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("Falha ao resolver diretório de configurações: {e}"))?;
+    std::fs::create_dir_all(&config_dir)
+        .map_err(|e| format!("Falha ao criar diretório de configurações: {e}"))?;
+    Ok(config_dir.join("cortex_credentials.json"))
+}
+
+/// Helper to write credentials atomically to disk with 0o600 permissions
+pub fn persist_credentials_atomic(path: &std::path::Path, data: &HashMap<String, serde_json::Value>) -> Result<(), String> {
+    let serialized = serde_json::to_string_pretty(data)
+        .map_err(|e| format!("Erro ao serializar credenciais: {e}"))?;
+
+    let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
+
+    // Write data to temporary file
+    std::fs::write(&tmp_path, serialized)
+        .map_err(|e| format!("Falha ao gravar arquivo temporário de credenciais: {e}"))?;
+
+    // On Unix (macOS / Linux), restrict permissions to owner only (0o600)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    // Atomic rename replaces the target file atomically
+    std::fs::rename(&tmp_path, path)
+        .map_err(|e| format!("Falha na renomeação atômica do arquivo de credenciais: {e}"))?;
+
+    Ok(())
+}
+
+/// Loads stored credentials from disk into memory
+pub fn load_credentials_from_disk(path: &std::path::Path) -> HashMap<String, serde_json::Value> {
+    if !path.exists() {
+        return HashMap::new();
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => HashMap::new(),
+    }
+}
+
+/// IPC command to save service credential securely and atomically
+#[tauri::command]
+fn salvar_credencial(
+    app: tauri::AppHandle,
+    servico: String,
+    token: String,
+    state: State<'_, CredenciaisState>,
+) -> Result<(), String> {
+    let servico_trimmed = servico.trim().to_lowercase();
+    let token_trimmed = token.trim().to_string();
+
+    let valor: serde_json::Value = match serde_json::from_str(&token_trimmed) {
+        Ok(val @ serde_json::Value::Object(_)) | Ok(val @ serde_json::Value::Array(_)) => val,
+        _ => serde_json::Value::String(token_trimmed),
+    };
+
+    let mut lock = state.credenciais.lock().map_err(|e| e.to_string())?;
+    lock.insert(servico_trimmed, valor);
+
+    let path = get_credentials_path(&app)?;
+    persist_credentials_atomic(&path, &lock)?;
+    Ok(())
+}
+
+/// IPC command to retrieve credential for a service
+#[tauri::command]
+fn obter_credencial(
+    servico: String,
+    state: State<'_, CredenciaisState>,
+) -> Result<Option<String>, String> {
+    let servico_trimmed = servico.trim().to_lowercase();
+    let lock = state.credenciais.lock().map_err(|e| e.to_string())?;
+    Ok(lock.get(&servico_trimmed).and_then(|val| match val {
+        serde_json::Value::String(s) => {
+            if s.trim().is_empty() {
+                None
+            } else {
+                Some(s.clone())
+            }
+        }
+        serde_json::Value::Null => None,
+        other => Some(other.to_string()),
+    }))
+}
+
+/// IPC command to delete service credential securely and atomically
+#[tauri::command]
+fn remover_credencial(
+    app: tauri::AppHandle,
+    servico: String,
+    state: State<'_, CredenciaisState>,
+) -> Result<(), String> {
+    let servico_trimmed = servico.trim().to_lowercase();
+    let mut lock = state.credenciais.lock().map_err(|e| e.to_string())?;
+    lock.remove(&servico_trimmed);
+
+    let path = get_credentials_path(&app)?;
+    persist_credentials_atomic(&path, &lock)?;
+    Ok(())
+}
+
+/// IPC command to list services with active credentials
+#[tauri::command]
+fn listar_conexoes_ativas(
+    state: State<'_, CredenciaisState>,
+) -> Result<Vec<String>, String> {
+    let lock = state.credenciais.lock().map_err(|e| e.to_string())?;
+    let ativas = lock
+        .iter()
+        .filter(|(_, val)| match val {
+            serde_json::Value::String(s) => !s.trim().is_empty(),
+            serde_json::Value::Null => false,
+            _ => true,
+        })
+        .map(|(k, _)| k.clone())
+        .collect();
+    Ok(ativas)
+}
+
+/// Pure helper to verify if coordinate (x, y) is inside rectangle with inner tolerance (e.g. 8px)
+pub fn is_cursor_in_inner_tolerance(x: f64, y: f64, r: &Retangulo, tol_px: f64) -> bool {
+    x >= r.x - tol_px && x <= r.x + r.w + tol_px && y >= r.y - tol_px && y <= r.y + r.h + tol_px
+}
+
+/// Pure helper to verify if coordinate (x, y) is inside outer hysteresis box (e.g. 35px X, 16px Y)
+pub fn is_cursor_in_outer_hysteresis(x: f64, y: f64, r: &Retangulo, margin_x: f64, margin_y: f64) -> bool {
+    x >= r.x - margin_x && x <= r.x + r.w + margin_x && y >= r.y - margin_y && y <= r.y + r.h + margin_y
+}
+
 /// IPC command to register measured interactive rects for a window
 #[tauri::command]
 fn area_interativa(janela: String, retangulos: Vec<Retangulo>, estado: tauri::State<EstadoAreas>) {
@@ -485,12 +627,14 @@ pub fn apply_dock_mode(
 }
 
 /// Dedicated OS cursor polling loop (45ms) for passive hit-testing and ignore_cursor_events toggling.
-/// When cursor is inside any registered interactive rect (with 4px tolerance): window receives cursor events.
-/// When cursor is outside all rects: window ignores cursor events (passes clicks straight to desktop)
-/// and emits 'cortex://cursor-fora' to safely collapse hovers.
+/// When cursor enters active rect (with 8px tolerance or 12px right edge trigger): window receives cursor events and emits 'dock-mode-changed' ('scoop').
+/// When cursor exits outer hysteresis box (35px margin on X axis): requires 240ms continuous persistence before ignoring cursor events and emitting 'cortex://cursor-fora'.
+/// When Flyout is open: lock is rigid, never emits cursor-fora and keeps cursor events permanently enabled.
 fn vigiar_cursor(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut fora: HashMap<String, bool> = HashMap::new();
+        let mut saida_inicio: HashMap<String, Instant> = HashMap::new();
+
         loop {
             std::thread::sleep(Duration::from_millis(45));
 
@@ -509,6 +653,7 @@ fn vigiar_cursor(app: tauri::AppHandle) {
                 .collect();
 
             fora.retain(|r, _| sobrepostas.iter().any(|(s, _)| s == r));
+            saida_inicio.retain(|r, _| sobrepostas.iter().any(|(s, _)| s == r));
 
             for (rotulo, janela) in &sobrepostas {
                 let is_puck = {
@@ -520,6 +665,7 @@ fn vigiar_cursor(app: tauri::AppHandle) {
                 };
 
                 if is_puck {
+                    saida_inicio.remove(rotulo);
                     let estava_fora = *fora.get(rotulo).unwrap_or(&false);
                     if estava_fora {
                         let _ = janela.set_ignore_cursor_events(false);
@@ -544,6 +690,7 @@ fn vigiar_cursor(app: tauri::AppHandle) {
                 };
 
                 if is_flyout {
+                    saida_inicio.remove(rotulo);
                     let estava_fora = *fora.get(rotulo).unwrap_or(&false);
                     if estava_fora || !fora.contains_key(rotulo) {
                         let _ = janela.set_ignore_cursor_events(false);
@@ -569,7 +716,6 @@ fn vigiar_cursor(app: tauri::AppHandle) {
 
                 // Regra de Ancoragem Rígida na Borda (Edge Trigger):
                 // Se o cursor estiver nos últimos 12px da margem direita do monitor ou da janela:
-                // cursor.x >= (origem.x + (largura_janela * escala)) - (12.0 * escala)
                 let borda_direita_janela = (origem.x as f64 + (largura_janela * escala)) - (12.0 * escala);
                 let borda_direita_monitor = janela
                     .current_monitor()
@@ -584,30 +730,24 @@ fn vigiar_cursor(app: tauri::AppHandle) {
                     && (cursor.x >= borda_direita_janela
                         || borda_direita_monitor.map_or(false, |bm| cursor.x >= bm));
 
-                let retangulo_hit = areas
+                // 1. Verificação de Entrada (Inner Box: tolerância 8px)
+                let retangulo_hit_inner = areas
                     .get(rotulo)
                     .map(|lista| {
-                        lista.iter().any(|r| {
-                            x >= r.x - 16.0
-                                && x <= r.x + r.w + 16.0
-                                && y >= r.y - 4.0
-                                && y <= r.y + r.h + 4.0
-                        })
+                        lista.iter().any(|r| is_cursor_in_inner_tolerance(x, y, r, 8.0))
                     })
                     .unwrap_or(false);
 
-                let dentro = retangulo_hit || na_borda_direita;
-
+                let dentro_inner = retangulo_hit_inner || na_borda_direita;
                 let estava_fora = *fora.get(rotulo).unwrap_or(&false);
-                let agora_fora = !dentro;
 
-                if !fora.contains_key(rotulo) || estava_fora != agora_fora {
-                    let _ = janela.set_ignore_cursor_events(agora_fora);
-                    if agora_fora {
-                        let _ = janela.emit_to(rotulo.as_str(), "cortex://cursor-fora", ());
-                    } else {
-                        // Ao detectar entrada (dentro == true), desbloqueia e emite dock-mode-changed("scoop")
-                        let is_flyout = {
+                if dentro_inner {
+                    // Cursor está firmemente dentro da área ativa: reseta cronômetro de saída
+                    saida_inicio.remove(rotulo);
+
+                    if !fora.contains_key(rotulo) || estava_fora {
+                        let _ = janela.set_ignore_cursor_events(false);
+                        let is_flyout_now = {
                             if let Some(dock_state) = app.try_state::<DockState>() {
                                 dock_state
                                     .mode
@@ -618,12 +758,44 @@ fn vigiar_cursor(app: tauri::AppHandle) {
                                 false
                             }
                         };
-                        if !is_flyout {
+                        if !is_flyout_now {
                             let _ = janela.emit_to(rotulo.as_str(), "dock-mode-changed", "scoop");
                             let _ = app.emit("dock-mode-changed", "scoop");
                         }
+                        fora.insert(rotulo.clone(), false);
                     }
-                    fora.insert(rotulo.clone(), agora_fora);
+                } else {
+                    // Cursor não está na área interna ativa (8px).
+                    // Se já estava confirmado como fora, garante estado e limpa timer.
+                    if estava_fora {
+                        saida_inicio.remove(rotulo);
+                        continue;
+                    }
+
+                    // Se estava dentro, verifica Histerese de Saída:
+                    // Outer Box com margem generosa de 35px no eixo X e 16px no eixo Y
+                    let dentro_outer = areas
+                        .get(rotulo)
+                        .map(|lista| {
+                            lista.iter().any(|r| is_cursor_in_outer_hysteresis(x, y, r, 35.0, 16.0))
+                        })
+                        .unwrap_or(false);
+
+                    if dentro_outer {
+                        // Cursor está na margem de histerese (dead-zone de 35px):
+                        // Mantém dock aberta e cancela contagem de saída
+                        saida_inicio.remove(rotulo);
+                    } else {
+                        // Cursor está fora da Outer Box (+35px).
+                        // Exige persistência de pelo menos 240ms contínuos antes de emitir cursor-fora.
+                        let inicio = saida_inicio.entry(rotulo.clone()).or_insert_with(Instant::now);
+                        if inicio.elapsed() >= Duration::from_millis(240) {
+                            let _ = janela.set_ignore_cursor_events(true);
+                            let _ = janela.emit_to(rotulo.as_str(), "cortex://cursor-fora", ());
+                            fora.insert(rotulo.clone(), true);
+                            saida_inicio.remove(rotulo);
+                        }
+                    }
                 }
             }
         }
@@ -1526,6 +1698,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(DockState::default())
         .manage(EstadoAreas::default())
+        .manage(CredenciaisState::default())
         .invoke_handler(tauri::generate_handler![
             greet,
             toggle_sidebar,
@@ -1542,7 +1715,11 @@ pub fn run() {
             create_apple_calendar_event,
             delete_apple_calendar_event,
             get_apple_calendar_events,
-            area_interativa
+            area_interativa,
+            salvar_credencial,
+            obter_credencial,
+            remover_credencial,
+            listar_conexoes_ativas
         ])
         .setup(move |app| {
             // Position the main Sidebar flush on the right edge on launch in 60x300 container
@@ -1591,6 +1768,16 @@ pub fn run() {
 
             // Start cursor hit-testing monitor in background for zero ghost clicks
             vigiar_cursor(app.handle().clone());
+
+            // Carrega credenciais do cofre local persistido no AppConfigDir
+            if let Some(cred_state) = app.try_state::<CredenciaisState>() {
+                if let Ok(path) = get_credentials_path(&app.handle()) {
+                    let loaded = load_credentials_from_disk(&path);
+                    if let Ok(mut lock) = cred_state.credenciais.lock() {
+                        *lock = loaded;
+                    }
+                }
+            }
 
             // Load monochrome tray template icon with transparent background
             let icon_bytes = include_bytes!("../icons/tray-template.png");
@@ -2037,5 +2224,95 @@ mod tests {
         }
         let areas = estado.areas.lock().unwrap();
         assert_eq!(areas.get("main").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_inner_tolerance_8px() {
+        let r = Retangulo { x: 100.0, y: 150.0, w: 60.0, h: 300.0 };
+        // Directly inside
+        assert!(is_cursor_in_inner_tolerance(130.0, 300.0, &r, 8.0));
+        // Boundary with 8px tolerance
+        assert!(is_cursor_in_inner_tolerance(92.0, 150.0, &r, 8.0));
+        assert!(is_cursor_in_inner_tolerance(168.0, 150.0, &r, 8.0));
+        // Outside 8px tolerance
+        assert!(!is_cursor_in_inner_tolerance(91.9, 150.0, &r, 8.0));
+        assert!(!is_cursor_in_inner_tolerance(168.1, 150.0, &r, 8.0));
+    }
+
+    #[test]
+    fn test_outer_hysteresis_35px_16px() {
+        let r = Retangulo { x: 100.0, y: 150.0, w: 60.0, h: 300.0 };
+        // Inside inner area
+        assert!(is_cursor_in_outer_hysteresis(110.0, 200.0, &r, 35.0, 16.0));
+        // In the hysteresis dead-zone (e.g. 20px outside in X)
+        assert!(is_cursor_in_outer_hysteresis(80.0, 200.0, &r, 35.0, 16.0));
+        // Exactly at boundary: 100.0 - 35.0 = 65.0
+        assert!(is_cursor_in_outer_hysteresis(65.0, 200.0, &r, 35.0, 16.0));
+        // Outside outer hysteresis box
+        assert!(!is_cursor_in_outer_hysteresis(64.9, 200.0, &r, 35.0, 16.0));
+        assert!(!is_cursor_in_outer_hysteresis(195.1, 200.0, &r, 35.0, 16.0));
+        // Y boundary: 150 - 16 = 134
+        assert!(is_cursor_in_outer_hysteresis(110.0, 134.0, &r, 35.0, 16.0));
+        assert!(!is_cursor_in_outer_hysteresis(110.0, 133.9, &r, 35.0, 16.0));
+    }
+
+    #[test]
+    fn test_credentials_persist_and_load_atomic() {
+        let temp_dir = std::env::temp_dir().join(format!("cortex_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let creds_file = temp_dir.join("test_credentials.json");
+
+        let mut data = HashMap::new();
+        data.insert("gmail".to_string(), serde_json::Value::String("ya29.test_token_123".to_string()));
+        data.insert("slack".to_string(), serde_json::Value::String("xoxp-test-456".to_string()));
+
+        let res = persist_credentials_atomic(&creds_file, &data);
+        assert!(res.is_ok());
+
+        let loaded = load_credentials_from_disk(&creds_file);
+        assert_eq!(loaded.get("gmail").unwrap().as_str().unwrap(), "ya29.test_token_123");
+        assert_eq!(loaded.get("slack").unwrap().as_str().unwrap(), "xoxp-test-456");
+
+        // Clean up
+        let _ = std::fs::remove_file(&creds_file);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_credentials_structured_and_remove() {
+        let temp_dir = std::env::temp_dir().join(format!("cortex_test_struct_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let creds_file = temp_dir.join("test_credentials.json");
+
+        let mut data = HashMap::new();
+        let gmail_obj = serde_json::json!({
+            "access_token": "ya29.live",
+            "refresh_token": "1//refresh",
+            "expires_at": 1728564000,
+            "client_id": "cid-123",
+            "client_secret": "sec-456"
+        });
+        data.insert("gmail".to_string(), gmail_obj);
+        data.insert("slack".to_string(), serde_json::Value::String("xoxp-123".to_string()));
+
+        let res = persist_credentials_atomic(&creds_file, &data);
+        assert!(res.is_ok());
+
+        let mut loaded = load_credentials_from_disk(&creds_file);
+        assert_eq!(loaded.get("gmail").unwrap()["access_token"], "ya29.live");
+        assert_eq!(loaded.get("gmail").unwrap()["refresh_token"], "1//refresh");
+
+        // Remove gmail
+        loaded.remove("gmail");
+        let res_update = persist_credentials_atomic(&creds_file, &loaded);
+        assert!(res_update.is_ok());
+
+        let reloaded = load_credentials_from_disk(&creds_file);
+        assert!(reloaded.get("gmail").is_none());
+        assert_eq!(reloaded.get("slack").unwrap().as_str().unwrap(), "xoxp-123");
+
+        // Clean up
+        let _ = std::fs::remove_file(&creds_file);
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
